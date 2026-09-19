@@ -114,7 +114,7 @@ class MafiaUIMixin:
             # 시작할 때 항상 읽는다. 예전엔 datadir가 있을 때만 읽어서, 재시작하면
             # 설정창이 빈 칸으로 보여 "저장이 안 된다"고 오해하기 쉬웠다(실제 파일엔
             # 저장돼 있었음 — AI 호출 때 뒤늦게 lazy load만 됐음).
-            mafia_config.set_overrides_file(_datadir)   # None이면 %LOCALAPPDATA%\MAFIA 폴백
+            mafia_config.set_overrides_file(_datadir)   # None이면 exe 옆 data 폴더
             mafia_config.load_overrides()
         except Exception:
             pass
@@ -1983,24 +1983,12 @@ class MafiaUIMixin:
         self._host_opening_now()
         players_desc = ", ".join(self.core.players.keys())
         need = max(1, getattr(self, "mafia_ai_count", 4))
-        try:
-            with open(os.path.join(os.environ["LOCALAPPDATA"], "Temp",
-                                   "mafia_boot_trace.txt"), "a", encoding="utf-8") as tf:
-                tf.write("spawn-all-start\n")
-        except Exception:
-            pass
         ai_names = [n for n, p in self.core.players.items() if p.get("is_ai")]
         personas_to_spawn = getattr(self, "_session_ai_personas", None) or ALL_PERSONAS[:len(ai_names)]
         oks = self.ai.spawn_all(personas_to_spawn, self.engine.name,
                                 players_desc, names=ai_names)
         # AI 스폰 완료 후 core의 역할 정보를 AI 객체들에게 배정!
         self.ai.assign_roles({n: p["role"] for n, p in self.core.players.items()})
-        try:
-            with open(os.path.join(os.environ["LOCALAPPDATA"], "Temp",
-                                   "mafia_boot_trace.txt"), "a", encoding="utf-8") as tf:
-                tf.write(f"spawn-all-done {oks}\n")
-        except Exception:
-            pass
         fail = [n for n, ok in oks if not ok]
         if fail:
             self.root.after(0, lambda: self.add_mafia_system(
@@ -2008,12 +1996,6 @@ class MafiaUIMixin:
 
 
     def _host_opening_now(self):
-        try:
-            with open(os.path.join(os.environ["LOCALAPPDATA"], "Temp",
-                                   "mafia_boot_trace.txt"), "a", encoding="utf-8") as tf:
-                tf.write("opening-start\n")
-        except Exception:
-            pass
         text = host_llm_cached(
             "너는 마피아 게임 사회자다. 한국어로 2문장 이내, 경쾌하고 담백한 톤.\n"
             "절대 다른 주제로 샘지 마시오. **개회 선언만** 하세요. 룰 설명 금지.\n"

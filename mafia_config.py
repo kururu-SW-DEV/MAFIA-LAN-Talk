@@ -170,32 +170,26 @@ RUNTIME_OVERRIDES = {}      # {"base_url":..., "model":..., "api_key":...} — m
 
 _OVERRIDES_FILE = None      # datadir 지정 시 mafia_llm.json 경로 (mafia_ui가 세팅)
 
+def _portable_datadir():
+    """exe(또는 소스) 옆의 data 폴더 — 모든 설정/로그의 기본 위치."""
+    from netutils import default_datadir
+    return default_datadir()
+
 def set_overrides_file(datadir):
     """설정파일 경로 지정 — <datadir>/mafia_llm.json (재시작 후에도 유지).
-    datadir 없으면 AppData 마피아 폴더로 폴백(저장 항상 가능)."""
+    datadir가 없으면 프로그램 옆 data 폴더를 쓴다(%LOCALAPPDATA% 등 다른 폴더는 쓰지 않음)."""
     global _OVERRIDES_FILE
     try:
-        if datadir:
-            _OVERRIDES_FILE = os.path.join(datadir, "mafia_llm.json")
-        else:
-            base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-            fallback = os.path.join(base, "MAFIA")
-            os.makedirs(fallback, exist_ok=True)
-            _OVERRIDES_FILE = os.path.join(fallback, "mafia_llm.json")
+        d = datadir or _portable_datadir()
+        os.makedirs(d, exist_ok=True)
+        _OVERRIDES_FILE = os.path.join(d, "mafia_llm.json")
     except Exception:
         _OVERRIDES_FILE = None
 
 def _ensure_overrides_file():
-    """v1.14 — 설정파일 경로 보장. datadir 미지정/None 시 AppData 폴백."""
-    global _OVERRIDES_FILE
+    """설정파일 경로 보장 — 미지정이면 프로그램 옆 data 폴더."""
     if not _OVERRIDES_FILE:
-        try:
-            base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-            fallback = os.path.join(base, "MAFIA")
-            os.makedirs(fallback, exist_ok=True)
-            _OVERRIDES_FILE = os.path.join(fallback, "mafia_llm.json")
-        except Exception:
-            _OVERRIDES_FILE = None
+        set_overrides_file(None)
     return _OVERRIDES_FILE
 
 
