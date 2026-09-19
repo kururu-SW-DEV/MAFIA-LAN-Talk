@@ -21,7 +21,17 @@
 |:---:|:---:|:---:|
 | ![직업 안내 팝업](docs/screenshots/01_role_popup.png) | ![투표 팝업](docs/screenshots/03_vote_popup.png) | ![밤 행동 선택](docs/screenshots/04_night_action.png) |
 
-> 위 화면은 AI 응답을 임시 가짜 응답으로 대체한 상태에서 캡처한 예시입니다.
+**시네마틱 연출** — 밤이 찾아오고 아침이 밝는 전환, 재판 개시와 처형 확정 순간에 연출 배너와 효과음이 나옵니다.
+
+| 밤 → 아침 | 재판 → 처형 |
+|:---:|:---:|
+| ![밤에서 아침으로 넘어가는 연출](docs/screenshots/cinematic_night.gif) | ![재판 개시와 처형 확정 연출](docs/screenshots/cinematic_trial.gif) |
+
+**마피아 비밀방** — 사람 마피아가 둘 이상이면 밤에 마피아끼리만 보이는 비밀방이 화면 우하단에 자동으로 열립니다. 공개 채팅과는 완전히 분리되어 있습니다.
+
+![마피아 비밀방](docs/screenshots/05_mafia_room.png)
+
+> 위 화면과 영상은 AI 응답을 임시 가짜 응답으로 대체한 상태에서 캡처한 예시입니다(효과음은 포함되지 않습니다).
 
 ### 실행
 
