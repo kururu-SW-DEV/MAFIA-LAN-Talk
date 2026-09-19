@@ -1788,7 +1788,7 @@ class MafiaUIMixin:
                 mafia_config.RUNTIME_OVERRIDES["api_key"] = key_raw
             # --- v1.05: 설정 파일로 저장 — 프로그램 재시작 후에도 유지 ---
             if mafia_config.save_overrides():
-                self.add_mafia_system("⚙ 게임 설정 파일 저장 완료 (재시작 후에도 유지)")
+                self.add_mafia_system("⚙ 게임 설정 파일 저장 완료 — " + str(mafia_config._OVERRIDES_FILE))
             else:
                 self.add_mafia_system("⚠ 게임 설정 파일을 저장하지 못했습니다 — 이번 실행 동안만 적용됩니다.")
             self.add_mafia_system(f"⚙ 게임 설정 저장 — AI {self.mafia_ai_count}명 / 인간 {conn_peers + 1}명")
@@ -2064,7 +2064,39 @@ class MafiaUIMixin:
         if self._mafia_is_host() and remain > 3 and (time.time() - getattr(self, "_last_any_talk_ts", time.time())) >= 25:
             self._last_any_talk_ts = time.time()
             self._kick_silent_room()
+        # v1.61 — 사람이 말 걸 때만 AI가 반응하면 사람에게만 몰리는 느낌이 난다.
+        # 사람 발언과 무관하게 AI끼리 서로 의심·반박하는 대화를 주기적으로 시작한다.
+        if self._mafia_is_host() and remain > 6:
+            now_t = time.time()
+            if now_t - getattr(self, "_last_ai_banter", 0) >= 11:
+                self._last_ai_banter = now_t
+                if random_mod.random() < 0.7:
+                    self._ai_vs_ai_banter()
         self._day_tick = self.root.after(1000, self._day_tick_loop)
+
+    def _ai_vs_ai_banter(self):
+        """AI 한 명이 '다른 AI'를 지목해 캐묻고, 지목당한 AI가 받아치게 한다(사람 제외)."""
+        if not (self.mafia_active and self.core.phase == Phase.DAY and getattr(self, "ai", None)):
+            return
+        cands = [pl for pl in self.ai.players
+                 if pl.alive and getattr(pl, "booted", False) and not getattr(pl, "busy", False)]
+        if len(cands) < 2:
+            return
+        a, b = random_mod.sample(cands, 2)
+        alive = ", ".join(self.core.alive_players())
+        def fa(pl):
+            return (f"[AI끼리 토론] 현재 낮 {self.core.day_no}, 생존: {alive}\n"
+                    f"'{pl.name}'로서 참가자 '{b.name}'에게 직접 말을 거세요: 그 사람의 앞선 "
+                    f"발언/행동에서 수상하거나 앞뒤가 안 맞는 점 하나를 짚어 캐묻거나 의심하세요. "
+                    f"'{b.name}'의 이름을 부를 것. 2문장 이내, 혼잣말/규칙 설명 금지.\n" + self._NO_PILE_ON)
+        def fb(pl):
+            return (f"[AI끼리 토론] '{a.name}'가 당신에게 의심을 던졌습니다. 최근 대화를 떠올려 "
+                    f"'{pl.name}'로서 변명하거나 맞받아치며 '{a.name}'의 허점을 되짚으세요. "
+                    f"2문장 이내.\n" + self._NO_PILE_ON)
+        self.ai.say_one_async(a, fa)
+        self.root.after(random_mod.randint(4500, 7000),
+                        lambda: self.ai.say_one_async(b, fb)
+                        if (self.mafia_active and self.core.phase == Phase.DAY and b.alive) else None)
 
     # ==================== 접속 끊김 감지 (v1.42) ====================
     def _mafia_start_disconnect_watch(self):
@@ -2370,7 +2402,8 @@ class MafiaUIMixin:
                 prompt = (
                     f"[투표] 누구에게 투표할까요? 생존 후보: {', '.join(alive)}. "
                     f"말이 많거나 적다는 이유만으로 정하지 말고, 사람마다 수상한 근거를 따로 따져 "
-                    f"표가 한 명에게만 쏠리지 않게 판단하세요. 답은 오직 '투표 이름' 한 줄.")
+                    f"표가 한 명에게만 쏠리지 않게 판단하세요. 사람 참가자와 AI 참가자를 똑같이 "
+                    f"의심 대상으로 보고, AI끼리의 논쟁(서로 의심·반박한 내용)도 근거로 삼으세요. 답은 오직 '투표 이름' 한 줄.")
                 target_text = (ag.say(prompt) or "").strip()
                 m = re.search(r"투표\s*([^\s]+)", target_text)
                 target = m.group(1) if m else target_text
