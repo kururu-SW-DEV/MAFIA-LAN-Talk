@@ -1,0 +1,362 @@
+# -*- coding: utf-8 -*-
+"""mafia_ai.py — MAFIA의 AI 두뇌 계층.
+
+구성:
+  1) LLM 직접 호출 레이어(사회자 + AI 플레이어 공용)
+     — 사내 vLLM(OpenAI 호환)을 urllib로 직접 호출. 응답 2~4초.
+  2) PlayerAgent      — AI 플레이어 1명. 자기 대화 기록(self.memory) 유지,
+     say(prompt)마다 시스템 프롬프트 + 최근 대화를 서버에 보내 '같은 AI'가
+     이어서 말하도록 함. socles: freq(발언 빈도)·att(공격성) 파라미터.
+  3) AIDirector       — AI 명단 관리, 병렬 발화, observe_all(모든 발언 관찰).
+
+v1.06: spawn_all(names=...) — 인격 템플릿 'name'이 아니라 core에 실제 등록된
+AI 참가자 명단으로 PlayerAgent.name을 설정 (사회자·AI가 같은 명단 지칭).
+"""
+import json
+import os
+import re
+import threading
+import time
+import urllib.error
+import urllib.request
+import random as _rndm
+
+import applog
+from mafia_config import (LLM_BASE_URL, LLM_MODEL, HERMES_REPLY_LANG,
+                          PLAYER_CONTEXT_TURNS, get_llm_api_key)
+
+# ============================================================
+# 1) LLM 직접 호출
+# ============================================================
+_llm_cache = {}                      # 사회자 개회사 등 단발 텍스트 캐시
+_llm_path_cache = {}                 # base_url -> 실제로 응답한 chat/completions 경로
+_LLM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MAFIA-LAN-Talk/1.61"
+_cache_lock = threading.Lock()
+
+
+def _llm_call(messages, max_tokens=350, timeout=45):
+    """OpenAI 호환 /v1/chat/completions 호출. 실패 시 None."""
+    import mafia_config
+    key = get_llm_api_key()
+    ov = dict(mafia_config.RUNTIME_OVERRIDES)
+    if not ov and getattr(mafia_config, "_OVERRIDES_FILE", None):
+        mafia_config.load_overrides()
+        ov = dict(mafia_config.RUNTIME_OVERRIDES)
+    body = json.dumps({
+        "model": (ov.get("model") or LLM_MODEL),
+        "messages": messages,
+        "max_tokens": max_tokens,
+    }).encode("utf-8")
+    b_url = (ov.get("base_url") or LLM_BASE_URL).rstrip("/")
+    if b_url.endswith("/v1"):
+        b_url = b_url[:-3]
+    if not b_url:
+        # 서버 URL 기본값이 없다 — 게임 설정 또는 MAFIA_LLM_BASE_URL로 지정해야 한다.
+        try:
+            applog.log("mafia_llm_call", exc=None, detail="LLM 서버 URL이 설정되지 않음")
+        except Exception:
+            pass
+        return None
+    # v1.61 — 호출 경로/헤더를 서버마다 다른 관례에 맞춘다.
+    #  · User-Agent: Cloudflare 등 앞단이 파이썬 기본 UA("Python-urllib")를 403(코드 1010)으로
+    #    막는 서비스(클라우드 게이트웨이)가 있어 브라우저형 UA를 항상 붙인다.
+    #  · 경로: vLLM/OpenAI는 <주소>/v1/chat/completions, 일부 게이트웨이는
+    #    <주소>/chat/completions(주소 자체가 이미 /v1/... 를 포함) — 404면 다음 후보를 시도하고,
+    #    통하는 경로는 기억해 다음 호출부터 바로 쓴다.
+    if b_url.endswith("/chat/completions"):
+        cands = [b_url]
+    else:
+        cands = [b_url + "/v1/chat/completions", b_url + "/chat/completions"]
+    known = _llm_path_cache.get(b_url)
+    if known in cands:
+        cands.remove(known)
+        cands.insert(0, known)
+    last_err = None
+    for url in cands:
+        req = urllib.request.Request(
+            url, data=body,
+            headers={"Content-Type": "application/json",
+                     "Accept": "application/json",
+                     "User-Agent": _LLM_USER_AGENT,
+                     "Authorization": "Bearer " + key})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                d = json.loads(r.read().decode("utf-8"))
+            _llm_path_cache[b_url] = url
+            msg = d["choices"][0]["message"]
+            return (msg.get("content") or "").strip()
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code == 404:
+                continue          # 경로가 다른 서버일 수 있음 — 다음 후보
+            break
+        except Exception as e:
+            last_err = e
+            break
+    # v1.56 — 예전엔 네트워크 타임아웃과 인증 오류/잘못된 모델명 같은 설정
+    # 실수를 구분할 방법이 전혀 없었다(전부 조용히 None). applog에만 남겨서
+    # 원인 파악은 가능하게 하되, 기존처럼 앱은 절대 죽지 않는다.
+    try:
+        detail = f"base_url={b_url} model={ov.get('model') or LLM_MODEL}"
+        if isinstance(last_err, urllib.error.HTTPError):
+            try:
+                detail += " body=" + last_err.read().decode("utf-8", "replace")[:200].replace(key, "***")
+            except Exception:
+                pass
+        applog.log("mafia_llm_call", exc=last_err, detail=detail)
+    except Exception:
+        pass
+    return None
+
+
+def host_llm_cached(system, user, max_tokens=350):
+    """캐시 포함 LLM 호출(사회자 스타일 단발 호출). 최근 대화 전용 캐시."""
+    cache_key = hash((system, user, max_tokens))
+    now = time.time()
+    with _cache_lock:
+        hit = _llm_cache.get(cache_key)
+        if hit and now - hit["ts"] < 12 * 3600:
+            return hit["text"]
+    text = _llm_call([{"role": "system", "content": system},
+                      {"role": "user", "content": user}], max_tokens=max_tokens)
+    if text:
+        with _cache_lock:
+            _llm_cache[cache_key] = {"ts": now, "text": text}
+    return text
+
+
+def sanitize_player_names(text, valid_names, replace_fallback=""):
+    """사회자 LLM 응답 정제 — 실제 참가자 명단에 없는 이름 언급 정정/제거.
+
+    1) 조사/호칭이 결합된 사람이름 후보(2~4글자)를 뽑아 valid에 정확/유사 매칭되면 치환.
+    2) 유사한 실명이 없으면 그 언급을 제거(사회자가 없는 사람 지칭 방지).
+    3) 결과가 빈 문장이 되면 replace_fallback 문장으로 대체(UI가 이어받음)."""
+    if not text or not valid_names:
+        return text
+    import difflib
+
+    def repl(m):
+        raw = m.group(0)
+        cand = raw.strip()
+        if cand in valid_names:
+            return raw
+        close = difflib.get_close_matches(cand, valid_names, n=1, cutoff=0.55)
+        if close:
+            return raw.replace(cand, close[0])
+        return ""
+
+    # 사람이름 후보 — 'OOO님' 결합형만(문장 훼손 최소화) + 별도로 조사 결합형은
+    # 후보가 'valid와 0.7 이상 유사'할 때만 치환, 아니면 건드리지 않음.
+    pattern = r"[가-힣]{2,4}님"
+    out = re.sub(pattern, repl, text)
+    out = re.sub(r"\s{2,}", " ", out)
+    out = re.sub(r"\s+([,.!?])", r"\1", out).strip(" ,.!? ")
+    return (out or replace_fallback).strip()
+
+
+def split_chat_tags(text):
+    """문서 1-3: LLM이 <strategy>~<chat>~로 출력하면 <chat>만 취함."""
+    if not text or "<" not in text:
+        return (text or "").strip()
+    m = re.search(r"<chat>\s*(.*?)\s*</chat>", text, re.S | re.I)
+    if m:
+        return m.group(1).strip()
+    if re.search(r"<strategy>", text, re.I):
+        return ""
+    return (text or "").strip()
+
+
+def clean_llm_dialect(text):
+    """LLM 오염 제거 — thinking·마크다운·role 접두어·캐릭터 불일치. 잘림 최소화."""
+    if not text:
+        return ""
+    text = re.sub(r"(?is)^\s*(thinking\s*:|thought\s*:)[^\n]{0,80}\n", "", text)
+    text = re.sub(r"(?is)^\s*\d+\.\s*\*\*[^*]+\*\*\s*:?\s*$", "", text, flags=re.M)
+    text = re.sub(r"^\s*\*\s*$", "", text, flags=re.M)
+    text = re.sub(r"^\s*[가-힣A-Za-z0-9_]{1,8}\s*:", "", text, count=1)
+    text = re.sub(r"(?s)<think.*?</think>\s*", "", text)
+    text = re.sub(r"(?im)^\s*(유저|사람|assistant|user|system|AI|사회자)\s*:", "", text)
+    # 공백 정리
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    # 끝에 쓸데없이 붙는 '소스 코드' 같은 것 제거
+    text = re.sub(r"```[\s\S]*```", "", text)
+    return (text or "").strip()
+
+
+# ============================================================
+# 2) AI 플레이어 개체
+# ============================================================
+class PlayerAgent:
+    """AI 플레이어 1명 = 대화 기록을 유지하는 개체."""
+
+    def __init__(self, name, persona, color, freq=50, att=50):
+        self.name = name
+        self.persona = persona
+        self.color = color
+        self.booted = False
+        self.alive = True
+        self.role = None
+        self.busy = False
+        self.last_say_ms = 0
+        self.freq = max(5, min(95, int(freq)))   # 발언 참여 확률
+        self.att = max(5, min(95, int(att)))     # 공격성
+        self.memory = []
+        self.lock = threading.Lock()
+
+    # ---------- 세션 부트스트랩(최초 1회, ~2초) ----------
+    def start_bootstrap(self, host_name, players_desc):
+        sys_prompt = (
+            f"/no_thinking\n"
+            f"당신은 마피아 게임 참가자 '{self.name}'입니다. 성격은: {self.persona}.\n"
+            f"게임 사회자는 '{host_name}'입니다. 다른 참가자: {players_desc}.\n"
+            f"역할은 사회자가 나중에 개별적으로 알려줍니다. 대사는 {HERMES_REPLY_LANG}")
+        ok = self._turn(sys_prompt,
+                        f"[게임 개요] 위 지시를 알겠다면 '{self.name} 준비완료'라고만 짧게 답하세요.",
+                        store=True)
+        self.booted = bool(ok)
+        return self.booted
+
+    # ---------- 한 턴 발언(~2초) ----------
+    def say(self, prompt):
+        """발언 지시를 주고 대사 문자열 반환. 실패 시 None."""
+        if not self.booted or self.busy:
+            return None
+        with self.lock:
+            if self.busy:
+                return None
+            self.busy = True
+        try:
+            t0 = time.time()
+            sys_prompt = (
+                "/no_thinking\n"
+                f"당신은 마피아 게임 참가자 '{self.name}'입니다. 성격은: {self.persona}.\n"
+                f"역할: {self.role or '미정'} — 역할명은 절대 말하지 말고 역할에 맞게 행동하세요.\n"
+                "[중요] 당신은 채팅에 있는 다른 플레이어들과 **대화**하고 있습니다.\n"
+                "  - 들어온 프롬프트에 특정 발언이 있으면 그 말에 **직접 대답**하세요.\n"
+                "  - 사람 이름을 불러 대화하세요. 질문이 오면 답하세요.\n"
+                "  - 혼잣말, 게임 규칙 설명, 발표문 금지.\n"
+                "  - 절대 규칙: 자기 자신을 투표/살해/구조 대상으로 지목 금지(자투 금지).\n"
+                "  - 앞 사람 의견을 그대로 반복(앵무새)하지 말고 제3의 인물을 환기하거나\n"
+                "    다른 관점을 덧대거나 변호하라.\n"
+                "  - 외국어·한자·번역투 금지 — 실제 한국 단체 카톡방 구어체만.\n"
+                "  - 의심을 바꿀 때는 이유를 붙여라(급격한 태세전환 금지).\n"
+                "  - 비밀 정보(내 역할/전략)는 절대 채팅에 쓰지 마라.\n"
+                f"  - 대사는 {HERMES_REPLY_LANG} 2문장 이내. 감정에 따라 ㅋㅋ/ㅠㅠ를 갈려서 써라.")
+            ok, text = self._turn(sys_prompt, prompt, store=True)
+            if not ok or not text:
+                return None
+            text = split_chat_tags(text)
+            text = clean_llm_dialect(text)
+            if re.match(r"(?i)^\s*(thinking\s*:|thought\s*:|1\.)", text):
+                return None
+            self.last_say_ms = int((time.time() - t0) * 1000)
+            return text
+        finally:
+            self.busy = False
+
+    def observe(self, speaker, text):
+        """다른 사람(유저/AI/사회자) 발언을 내 기억에 적립."""
+        self.memory.append({"role": "user",
+                            "content": f"[발언] {speaker}: {text}"})
+        if len(self.memory) > 40:
+            self.memory = self.memory[-40:]
+
+    def _turn(self, sys_prompt, user_prompt, store=False):
+        """1회 호출. messages = system + memory(-N) + user. store=True면 기록 저장."""
+        msgs = [{"role": "system", "content": sys_prompt}]
+        msgs += self.memory[-PLAYER_CONTEXT_TURNS:]
+        msgs.append({"role": "user", "content": user_prompt})
+        text = _llm_call(msgs, max_tokens=512)
+        text = clean_llm_dialect(text)
+        if store:
+            self.memory.append({"role": "user", "content": user_prompt})
+            if text:
+                self.memory.append({"role": "assistant", "content": text})
+            if len(self.memory) > 40:
+                self.memory = self.memory[-40:]
+        return (True, text) if text else (False, None)
+
+
+# 이전 이름 호환
+SubAgentPlayer = PlayerAgent
+
+
+# ============================================================
+# 3) AI 매니저 — 병렬 스폰/대사 큐
+# ============================================================
+class AIDirector:
+    """AI 플레이어 목록을 관리하고, 턴 지시를 병렬 스레드로 던진다."""
+
+    def __init__(self):
+        self.players = []
+        self.on_utt = None
+        self.pending_talk = []
+
+    def spawn_all(self, personas, host_name, players_desc, names=None):
+        """v1.06: names가 주어지면(core AI 실명) 그 이름을 사용 — 사회자·AI가
+        같은 명단을 지칭. personas의 'name'은 인격 톤 템플릿일 뿐."""
+        if not names:
+            names = [p["name"] for p in personas]
+        self.players = [PlayerAgent(names[i] if i < len(names) else p["name"],
+                                    p["persona"], p["color"],
+                                    freq=p.get("freq", 50), att=p.get("att", 50))
+                        for i, p in enumerate(personas)]
+        ok_list = []
+        for pl in self.players:
+            ok = pl.start_bootstrap(host_name, players_desc)
+            ok_list.append((pl.name, ok))
+        self.flush_pending()
+        return ok_list
+
+    def assign_roles(self, roles):
+        for pl in self.players:
+            pl.role = roles.get(pl.name, "citizen")
+
+    def observe_all(self, speaker, text):
+        """모든 살아있는 AI의 기억에 한 발언을 적립."""
+        for pl in self.players:
+            if pl.alive and pl.booted:
+                pl.observe(speaker, text)
+
+    def say_async(self, prompt_factory, honor_freq=True):
+        """모든 살아있는 AI에 비동기 발언 지시. freq 확률로만 끼어들고 아니면 침묵."""
+        import random as _r
+        for pl in self.players:
+            if not pl.alive:
+                continue
+            if honor_freq and _r.random() * 100 > getattr(pl, "freq", 50):
+                continue
+            if not pl.booted:
+                self.pending_talk.append((pl, prompt_factory))
+                continue
+            if pl.busy:
+                continue
+            th = threading.Thread(
+                target=self._say_worker, args=(pl, prompt_factory), daemon=True)
+            th.start()
+
+    def say_one_async(self, pl, prompt_factory):
+        """특정 AI 1명에게만 비동기 발언 지시 (연쇄 폭발 방지)."""
+        if not pl.alive or not pl.booted or pl.busy:
+            return
+        threading.Thread(
+            target=self._say_worker, args=(pl, prompt_factory), daemon=True).start()
+
+    def flush_pending(self):
+        pend, self.pending_talk = self.pending_talk, []
+        for pl, factory in pend:
+            if pl.alive and pl.booted and not pl.busy:
+                th = threading.Thread(
+                    target=self._say_worker, args=(pl, factory), daemon=True)
+                th.start()
+
+    def _say_worker(self, pl, prompt_factory):
+        prompt = prompt_factory(pl)
+        text = pl.say(prompt)
+        if text and self.on_utt:
+            self.on_utt(pl.name, pl.color, text)
+
+    def stop_all(self):
+        for pl in self.players:
+            pl.alive = False
