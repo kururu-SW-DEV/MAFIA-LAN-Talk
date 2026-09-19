@@ -232,12 +232,13 @@ def get_llm_api_key():
     load_overrides()
     return RUNTIME_OVERRIDES.get("api_key", "")
 
+THREAT_KEYWORDS = ("죽여", "죽인", "죽일", "처형하", "해치", "협박", "봉인")  # 협박 판정(흔한 한 글자 제외)
 VOTE_WINDOW = 15              # 투표 팝업 카운트다운(초)
 # ── AI가 사람 한 명에게 몰려 "다구리" 치는 느낌을 줄이는 튜닝 값 ──
 AI_REACT_MAX_REPLIES = 1      # 사람 발언 하나에 직접 대답하는 AI 수 상한(예전엔 전원이 확률적으로 답함)
 AI_REACT_SKIP_PROB = 0.15     # 아예 대답 없이 넘어가는 확률(사람 말에 매번 반응하지 않게)
-AI_PILE_ON_LIMIT_RATIO = 0.5  # AI 표가 한 명에게 이 비율 이상 쌓이면(최소 2표)
-AI_PILE_ON_REDIRECT_PROB = 0.6  # 뒤에 던지는 AI는 이 확률로 다른 후보에게 돌린다
+AI_PILE_ON_LIMIT_RATIO = 0.5  # AI 표가 한 명에게 이 비율 이상 쌓이면(최소 1표, AI 4명이면 3번째 표부터)
+AI_PILE_ON_REDIRECT_PROB = 0.9  # 뒤에 던지는 AI는 이 확률로 다른 후보에게 돌린다
 DEFENSE_VOTE_WINDOW = 15      # 최후 변론 후 찬반(처형여부) 투표 제한시간(초) —
                               # 시간 안에 안 누르면 기권=반대(부결 쪽) 취급.
 NIGHT_ACTION_WINDOW = 15      # 마피아 살해/의사 치료/경찰 조사 대상 선택 팝업

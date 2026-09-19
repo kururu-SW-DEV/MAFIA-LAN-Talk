@@ -119,14 +119,13 @@ def simulate(target_of_all, trials=3000):
 
 mean_h, full_h = simulate("나")
 mean_a, full_a = simulate("레오")
-check(f"4) 모두 사람을 찍으려 해도 평균 {mean_h:.2f}표(4표 전원 몰표 비율 {full_h:.2f})로 분산됨", mean_h < 3.3 and full_h < 0.30)
-check(f"4) AI 한 명에게 몰려도 똑같이 분산(사람만 봐주지 않음): 평균 {mean_a:.2f}표", mean_a < 2.7)
+check(f"4) 모두 사람을 찍으려 해도 평균 {mean_h:.2f}표(4표 전원 몰표 비율 {full_h:.2f})로 분산됨", mean_h < 2.6 and full_h < 0.05)
+check(f"4) AI 한 명에게 몰려도 똑같이 분산(사람만 봐주지 않음): 평균 {mean_a:.2f}표", mean_a < 2.3)
 st = Stub(AIS)
-st.core.votes.update({"루카": "나"})
-check("4) 표가 1개뿐이면(한계 미만) 그대로 통과", all(st._pile_on_redirect("미나", "나") == "나" for _ in range(50)))
+check("4) 아직 표가 없으면 그대로 통과", all(st._pile_on_redirect("미나", "나") == "나" for _ in range(50)))
 st.core.votes.update({"루카": "나", "미나": "나"})
 redirected = sum(1 for _ in range(1000) if st._pile_on_redirect("제이", "나") != "나") / 1000
-check(f"4) 이미 2표 쌓이면 약 60% 다른 후보로 돌림 (실측 {redirected:.2f})", 0.5 <= redirected <= 0.7)
+check(f"4) 이미 2표 쌓이면 약 90% 다른 후보로 돌림 (실측 {redirected:.2f})", 0.82 <= redirected <= 0.97)
 check("4) 돌린 대상은 자기 자신/원래 대상이 아님", all(
     st._pile_on_redirect("제이", "나") not in ("제이",) for _ in range(200)))
 

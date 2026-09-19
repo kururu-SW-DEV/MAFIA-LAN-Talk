@@ -1385,7 +1385,7 @@ class MafiaUIMixin:
             self.ai.observe_all(self.engine.name, text)   # 모든 AI가 내 말을 기억
         # v1.30 — 협박 발언 즉시 AI 불쾌 반응 (톤 감지 1회)
         import re as _re2
-        _threat_kw = ("죽", "해치", "죽여", "처형", "무조건", "필사", "협박", "봉인")
+        _threat_kw = mafia_config.THREAT_KEYWORDS
         if self.core.phase in (Phase.DAY, Phase.VOTE) and any(k in text for k in _threat_kw):
             import random as _rq
             live = [pl for pl in getattr(self, "ai", None) and self.ai.players or []
@@ -2371,7 +2371,7 @@ class MafiaUIMixin:
         try:
             ai_names = {pl.name for pl in self.ai.players}
             n_ai = max(1, sum(1 for pl in self.ai.players if pl.alive))
-            limit = max(2, int(n_ai * AI_PILE_ON_LIMIT_RATIO))
+            limit = max(1, int(n_ai * AI_PILE_ON_LIMIT_RATIO))
             ai_votes = [t for v, t in self.core.votes.items() if v in ai_names and t]
             if ai_votes.count(target) < limit or _rr.random() >= AI_PILE_ON_REDIRECT_PROB:
                 return target
@@ -2974,7 +2974,7 @@ class MafiaUIMixin:
             if rec.get("kind") == "text" and (rec.get("mine") or rec.get("label") == me or rec.get("label") == "나"):
                 vals.append(str(rec.get("text", "")))
         joined = " ".join(vals)
-        threat_kw = ("죽", "해치", "죽여", "목", "처형", "무조건", "필사", "협박")
+        threat_kw = mafia_config.THREAT_KEYWORDS
         pers_kw = ("근거", "논리", "증거", "생각", "아니", "의심")
         if any(k in joined for k in threat_kw):
             return "threat", vals[-1] if vals else ""
