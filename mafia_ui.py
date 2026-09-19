@@ -3667,7 +3667,9 @@ class MafiaUIMixin:
                 self.add_mafia_system("🌙 밤 10초 남았습니다")
         # v1.08: 밤 무료 채팅 2건(무해 잡담 — 역할 노출 없음)
         if sec == 20:
-            self._ai_night_chatter()
+            self._ai_night_chatter(2)
+        elif sec == 11:
+            self._ai_night_chatter(1)
         if sec <= 0:
             # --- 보강: 문서 기획 Grace Period 1.5초(네트워크 지연 대비) ---
             import mafia_config as _cfg
@@ -3721,29 +3723,82 @@ class MafiaUIMixin:
             else:
                 self._mafia_send_private(h, "hdm", target=h, text=msg)
 
-    def _ai_night_chatter(self):
-        """밤에도 살아있는 참가자 1~2명의 무해 잡담(역할 노출 없음) — '밤에 AI 채팅 안 침' UX 해소."""
+    # 밤 잡담용 분위기 씨앗 — 매번 다른 방향으로 말하게 해서 같은 말 반복을 막는다.
+    _NIGHT_MOODS = (
+        "밤이 조용해서 괜히 긴장되거나 무서운 기분",
+        "졸리거나 피곤한데 잠들면 안 될 것 같은 기분",
+        "낮에 나온 이야기 중 마음에 걸렸던 장면을 혼잣말로 되짚기(특정인을 확정적으로 지목하지는 말 것)",
+        "누가 오늘 밤 당할지 불안해하며 주변 분위기를 살피기",
+        "밤에 들리는 소리나 방 안의 공기를 농담처럼 묘사하기",
+        "내일 낮에 어떻게 토론해야 할지 은근히 다짐하기(전략·역할은 절대 노출 금지)",
+        "다른 참가자에게 가볍게 말 걸기(이름을 부르며 안부나 농담)",
+    )
+    # LLM을 못 쓸 때(서버 미설정/오류)만 쓰는 예비 문구 — 예전엔 이것 6개가 전부였다.
+    _NIGHT_FALLBACK_LINES = (
+        "밤이라 좀 무섭다 야", "여기 방 분위기 완전 싸늘해", "다들 잠은 자고 왔어?",
+        "왠지 오늘 밤 누가 사라질 것 같은 느낌이…", "조용하니까 더 불안하네", "눈 감으면 안 될 것 같아 ㅋㅋ",
+        "아 밖에서 무슨 소리 난 것 같은데", "내일 낮엔 꼭 마피아 찾아야지…", "다들 살아서 아침에 보자",
+        "이 시간이 제일 길게 느껴져", "소름 돋았어 방금", "낮에 그 말이 자꾸 생각나네",
+        "오늘 밤은 제발 평화롭게…", "긴장돼서 손에 땀나 ㅠㅠ", "누가 마피아일까 계속 생각 중이야",
+        "커튼 뒤에 누가 있는 것 같아 ㅋㅋㅋ", "심장 소리 크게 들리는 거 나만 그래?",
+    )
+
+    def _ai_night_chatter(self, count=2):
+        """밤에도 살아있는 AI 몇 명의 무해한 잡담(역할·전략 노출 금지) — '밤에 AI 채팅 안 침' 해소.
+        v1.61 — 고정 문구 6개를 돌려쓰던 것을, AI별 성격과 대화 기억을 반영한 LLM 발언으로
+        교체했다(LLM을 못 쓰면 늘려 둔 예비 문구에서 겹치지 않게 뽑는다)."""
         import random as _rr
         live = [pl for pl in self.ai.players
                 if pl.alive and getattr(pl, "booted", False)]
         if not live:
             return
         _rr.shuffle(live)
-        lines = [
-            "Nobody talks at night, 조용하네…",
-            "밤이라 좀 무섭다 야",
-            "여기 방 분위기 완전 싸늘해",
-            "아 무슨 소리지? 웬수다",
-            "다들 잠은 자고 왔어?",
-            "이층 다리가 삐걱거려",
-        ]
-        for i, pl in enumerate(live[:2]):
-            t_line = lines[i % len(lines)]
-            self.root.after(
-                int(300 + i * 700),
-                lambda p=pl, msg=t_line:
-                    self.add_mafia_bubble(msg, p.name))
+        for i, pl in enumerate(live[:count]):
+            mood = _rr.choice(self._NIGHT_MOODS)
+            threading.Thread(target=self._night_chatter_worker, args=(pl, mood, i), daemon=True).start()
         # 유저(사람)는 침묵 — 사람이 쓰지 않으면 잡담도 없이 조용.
+
+    def _night_chatter_worker(self, pl, mood, order):
+        try:
+            others = [n for n in self.core.alive_players() if n != pl.name]
+        except Exception:
+            others = []
+        names_rule = (f"이 방의 다른 참가자는 {', '.join(others)} 뿐입니다 — 이름을 부를 땐 이 중에서만, 없는 이름을 지어내지 마세요. "
+                      if others else "")
+        prompt = (names_rule + "[사회자] 지금은 밤입니다. 마피아·의사·경찰이 몰래 행동하는 중이고 다들 채팅으로 잡담만 할 수 있습니다. "
+                  "당신의 성격대로, 이런 분위기로 딱 한 문장만 말하세요: " + mood + ". "
+                  "규칙: 자기 역할/정체나 밤 행동, 특정인을 마피아라고 단정하는 말은 절대 금지. 한국어 구어체만. "
+                  "앞서 다른 사람이 한 말과 다르게, 자연스럽고 짧게.")
+        text = None
+        try:
+            text = pl.say(prompt)
+        except Exception:
+            text = None
+        text = (text or "").strip().strip('"').strip("'")
+        if not text or len(text) > 120:
+            text = self._pick_night_fallback()
+
+        def _post():
+            # 그새 아침이 됐거나 게임이 끝났으면 밤 잡담을 올리지 않는다.
+            if not self.mafia_active or self.core.phase != Phase.NIGHT or not pl.alive:
+                return
+            self.add_mafia_ai(pl.name, text)
+            if getattr(self, "ai", None):
+                self.ai.observe_all(pl.name, text)
+        self.root.after(int(400 + order * 900), _post)
+
+    def _pick_night_fallback(self):
+        import random as _rr
+        used = getattr(self, "_night_fallback_used", None)
+        if used is None:
+            used = self._night_fallback_used = set()
+        pool = [l for l in self._NIGHT_FALLBACK_LINES if l not in used]
+        if not pool:
+            used.clear()
+            pool = list(self._NIGHT_FALLBACK_LINES)
+        line = _rr.choice(pool)
+        used.add(line)
+        return line
 
     def _set_night_count(self, sec):
         try:
