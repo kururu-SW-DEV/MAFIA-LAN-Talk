@@ -22,7 +22,9 @@ from mafia_config import (ALL_PERSONAS, AI_PERSONAS, GAME_ROOM_NAME, MIN_PLAYERS
                           MAX_PLAYERS,
                           DAY_CYCLE_SECONDS, NIGHT_SOLVE_SECONDS,
                           VOTE_REVEAL_DELAY, VOTE_WINDOW,
-                          DEFENSE_VOTE_WINDOW, NIGHT_ACTION_WINDOW)
+                          DEFENSE_VOTE_WINDOW, NIGHT_ACTION_WINDOW,
+                          AI_REACT_MAX_REPLIES, AI_REACT_SKIP_PROB,
+                          AI_PILE_ON_LIMIT_RATIO, AI_PILE_ON_REDIRECT_PROB)
 from mafia_ai import AIDirector, host_llm_cached, clean_llm_dialect, sanitize_player_names, split_chat_tags
 from netutils import resource_dir
 import emoji_render
@@ -1400,7 +1402,7 @@ class MafiaUIMixin:
             else:
                 self._trigger_ai_reactions(
                     context=f"플레이어 '{self.engine.name}'의 발언: \"{text}\"",
-                    min_interval=5)
+                    min_interval=5, max_replies=AI_REACT_MAX_REPLIES)
 
     # ==================== 이름 멘션 직접 대답 ====================
     def _detect_mention(self, text):
@@ -1549,7 +1551,12 @@ class MafiaUIMixin:
                                  if pl.alive and pl.booted] or ["AI"])
         self.add_mafia_system(f"💭 {who}님이 생각 중… (약 4~6초)")
 
-    def _trigger_ai_reactions(self, context, min_interval=0, prefix=""):
+    # 한 사람에게 몰아붙이는 분위기를 막는 공통 지시문(반응/연쇄/투표 프롬프트에 덧붙인다)
+    _NO_PILE_ON = ("[중요] 한 사람에게만 집중해서 공격·의심하지 마세요. 반박만 하지 말고 동의·질문·농담·"
+                   "다른 참가자 언급도 섞고, 이미 다른 사람이 그 사람을 몰아가고 있으면 같이 몰지 말고 "
+                   "다른 시선이나 변호를 보태세요.")
+
+    def _trigger_ai_reactions(self, context, min_interval=0, prefix="", max_replies=None):
         now = time.time()
         if now - getattr(self, "_last_ai_trigger", 0) < min_interval:
             return
@@ -1561,9 +1568,27 @@ class MafiaUIMixin:
                     f"[참고] 현재 낮 {self.core.day_no}, 생존: {alive}\n"
                     f"'{pl.name}'로서 방금 그 말에 **직접 대답**하세요:\n"
                     f"  1) 말 건 사람의 내용을 인용하거나 질문에 답하고\n"
-                    f"  2) 반박/동의/의심 중 하나로 태도를 명확히 하세요.\n"
-                    f"혼잣말/게임 규칙 설명은 금지. 2문장 이내.")
-        self.ai.say_async(factory)
+                    f"  2) 동의/반박/질문/농담 중 자연스러운 태도를 고르세요(무조건 의심·반박하지 말 것).\n"
+                    f"혼잣말/게임 규칙 설명은 금지. 2문장 이내.\n" + self._NO_PILE_ON)
+        if max_replies is None:
+            self.ai.say_async(factory)          # 게임 상황 전환 등: 예전처럼 여러 명이 반응
+        else:
+            # v1.61 — 사람 발언 하나에 AI가 우르르 대답해 다구리처럼 느껴지던 것을,
+            # 대답하는 AI를 상한(기본 1명, 가끔 아예 무반응)으로 줄인다. 이어지는 대화는
+            # 기존 연쇄 반응(_on_ai_utt → chain replier)이 AI끼리 이어 간다.
+            import random as _rr
+            cands = [pl for pl in self.ai.players
+                     if pl.alive and getattr(pl, "booted", False) and not getattr(pl, "busy", False)]
+            if not cands or _rr.random() < AI_REACT_SKIP_PROB:
+                return
+            picks = []
+            pool = list(cands)
+            while pool and len(picks) < max(1, int(max_replies)):
+                w = [max(1, getattr(p, "freq", 50)) for p in pool]
+                p = _rr.choices(pool, weights=w, k=1)[0]
+                picks.append(p); pool.remove(p)
+            for i, pl in enumerate(picks):
+                self.root.after(int(i * 900), lambda p=pl: self.ai.say_one_async(p, factory))
         self._show_ai_typing_hint()
         # 사회자 실시간 한마디(3초 LLM) — 40% 확률로 개입해 티키타카 보강
         if random_mod.random() < 0.40:
@@ -1595,7 +1620,7 @@ class MafiaUIMixin:
             f"'{pl.name}'는 그 말에 **직접 대답**하세요:\n"
             f"  1) 상대 말을 인용하거나 답하고\n"
             f"  2) 동의/반박/농담 중 태도를 명확히 하세요. "
-            f"혼잣말 금지, 2문장 이내."))
+            f"혼잣말 금지, 2문장 이내.\n" + self._NO_PILE_ON))
         self.ai.say_one_async(pick, factory)
 
     # ==================== 게임 시작 ====================
@@ -2324,6 +2349,26 @@ class MafiaUIMixin:
         opened = getattr(self, "_vote_popup_open_ts", 0)
         return (time.time() - opened) < 5.0
 
+    def _pile_on_redirect(self, voter, target):
+        """v1.61 — 몰표 방지: 이미 AI 표가 한 명에게 절반 이상(최소 2표) 쌓였는데 뒤의 AI가 또 그 사람을
+        찍으려 하면, 일정 확률로 표를 가장 덜 받은 다른 후보에게 돌린다. 사람이든 AI든 누구에게나
+        똑같이 적용된다(사람만 봐주는 게 아님)."""
+        import random as _rr
+        try:
+            ai_names = {pl.name for pl in self.ai.players}
+            n_ai = max(1, sum(1 for pl in self.ai.players if pl.alive))
+            limit = max(2, int(n_ai * AI_PILE_ON_LIMIT_RATIO))
+            ai_votes = [t for v, t in self.core.votes.items() if v in ai_names and t]
+            if ai_votes.count(target) < limit or _rr.random() >= AI_PILE_ON_REDIRECT_PROB:
+                return target
+            alts = [n for n in self.core.alive_players() if n not in (voter, target)]
+            if not alts:
+                return target
+            fewest = min(ai_votes.count(n) for n in alts)
+            return _rr.choice([n for n in alts if ai_votes.count(n) == fewest])
+        except Exception:
+            return target
+
     def _ai_vote_in_popup(self, ag):
         import random as _r
         # v1.15 — 팝업이 이미 닫혀도(유저가 먼저 투표해 overlay close) AI 표는
@@ -2342,7 +2387,8 @@ class MafiaUIMixin:
                 alive = [n for n in alive if n != ag.name]
                 prompt = (
                     f"[투표] 누구에게 투표할까요? 생존 후보: {', '.join(alive)}. "
-                    f"답은 오직 '투표 이름' 한 줄.")
+                    f"말이 많거나 적다는 이유만으로 정하지 말고, 사람마다 수상한 근거를 따로 따져 "
+                    f"표가 한 명에게만 쏠리지 않게 판단하세요. 답은 오직 '투표 이름' 한 줄.")
                 target_text = (ag.say(prompt) or "").strip()
                 m = re.search(r"투표\s*([^\s]+)", target_text)
                 target = m.group(1) if m else target_text
@@ -2392,7 +2438,10 @@ class MafiaUIMixin:
                     return
                 # 반영 (core) — v1.40: 대상은 비공개, 완료 여부만 알림(익명 개표)
                 if target and ag.name in self.core.players:
-                    self.core.cast_vote(ag.name, target)
+                    # (바깥 함수의 target을 여기서 재대입하면 파이썬이 지역변수로 취급해
+                    #  UnboundLocalError가 난다 — 새 이름으로 받는다)
+                    final_target = self._pile_on_redirect(ag.name, target)
+                    self.core.cast_vote(ag.name, final_target)
                     _pd, _pt = self._vote_progress_counts()
                     self.add_mafia_system(f"🗳 {ag.name}(AI)님 투표 완료 (익명 개표) · 진행률 {_pd}/{_pt}")
                     self._refresh_vote_progress_label()
