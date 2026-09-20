@@ -538,6 +538,7 @@ class MafiaViewMixin:
             if hasattr(self, "mafia_join_btn"):
                 self.mafia_join_btn.pack_forget()
         self.mafia_bar.pack(fill="x", before=self.chat_wrap)
+        self._refresh_mafia_roster()
         self.entry.configure(state="normal", font=FONT_MSG)
         self.send_btn.configure(state="normal")
         self.attach_btn.configure(state="normal")
@@ -655,7 +656,56 @@ class MafiaViewMixin:
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
 
+    def _mafia_roster_text(self):
+        """생존/사망 현황 문구(직업은 밝히지 않는다). 게임 중이 아니면 빈 문자열."""
+        core = getattr(self, "core", None)
+        if not core or not getattr(self, "mafia_active", False) or not core.players:
+            return ""
+        me = getattr(self.engine, "name", None)
+        alive, dead = [], []
+        with core.lock:
+            for n, p in core.players.items():
+                tag = n + (" (나)" if n == me else "") + (" 🤖" if p.get("is_ai") else "")
+                (alive if p.get("alive") else dead).append(tag)
+        txt = f"🟢 생존 {len(alive)}명: " + " · ".join(alive)
+        if dead:
+            txt += f"     💀 사망 {len(dead)}명: " + " · ".join(dead)
+        return txt
+
+    def _refresh_mafia_roster(self):
+        """게임바 아래 생존/사망 현황 줄을 갱신한다(마피아방을 보고 있을 때만 표시)."""
+        try:
+            lbl = getattr(self, "mafia_roster_lbl", None)
+            if lbl is None:
+                lbl = self.mafia_roster_lbl = tk.Label(
+                    self.mafia_bar.master, text="", anchor="w", justify="left",
+                    fg="#e5e7eb", bg="#111827", font=FONT_SM, padx=14, pady=4)
+                lbl.bind("<Configure>", lambda e: lbl.configure(wraplength=max(200, e.width - 28)))
+                emoji_render.apply(lbl, FONT_SM)
+            txt = self._mafia_roster_text()
+            if txt and getattr(self, "mafia_bar_is_game", False) and self.current == self.mafia_room_key():
+                lbl.configure(text=txt)
+                if not lbl.winfo_ismapped():
+                    lbl.pack(fill="x", before=self.chat_wrap)
+            else:
+                lbl.pack_forget()
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
+    def _mafia_roster_tick(self):
+        """2초마다 현황을 갱신(사망·접속 끊김 등 어떤 경로로 바뀌어도 반영). 게임 중에만 돈다."""
+        self._roster_tick_id = None
+        if not getattr(self, "mafia_active", False):
+            self._refresh_mafia_roster()
+            return
+        self._refresh_mafia_roster()
+        self._roster_tick_id = self.root.after(2000, self._mafia_roster_tick)
+
     def refresh_mafia_phase_label(self):
+        if getattr(self, "mafia_active", False) and getattr(self, "_roster_tick_id", None) is None:
+            self._roster_tick_id = self.root.after(0, self._mafia_roster_tick)
+        else:
+            self._refresh_mafia_roster()
         if not getattr(self, "mafia_phase_lbl", None):
             return
         ph = self.core.phase

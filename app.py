@@ -1645,6 +1645,8 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
             return
         if getattr(self, "mafia_bar", None) and getattr(self, "mafia_bar_is_game", False):
             self.mafia_bar.pack_forget()
+            if getattr(self, "mafia_roster_lbl", None):
+                self.mafia_roster_lbl.pack_forget()
             self.mafia_bar_is_game = False
         eng = self.engine
         if eng is None:

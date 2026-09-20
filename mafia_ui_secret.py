@@ -60,9 +60,10 @@ class MafiaSecretMixin:
                        font=(FONT_FAM, 9, "bold"), anchor="w")
         lbl.pack(side="left")
         emoji_render.apply(lbl, (FONT_FAM, 9, "bold"))
-        tk.Button(head, text="✕", command=lambda: self._mafia_room_close(keep_reopen=True),
-                  bg=C_CARD, fg=C_MUTE,
-                  relief="flat", bd=0, highlightthickness=0, cursor="hand2").pack(side="right")
+        emoji_render.make_pill_button(
+            head, "✕", lambda: self._mafia_room_close(keep_reopen=True), bg="#374151", fg="white",
+            hover_bg="#4b5563", font_path=emoji_render.FONT_PATH_REGULAR,
+            font_size=POPUP_SMALL_BTN_PX, radius=6, pad_x=8, pad_y=2).pack(side="right")
         txt = tk.Text(f, height=9, bd=0, bg="#111827", fg=M_TEXT_LIGHT, font=M_FONT_HELP,
                       wrap="word", state="disabled")
         txt.pack(fill="both", expand=True, padx=10)
@@ -107,11 +108,11 @@ class MafiaSecretMixin:
             applog.swallowed(_swallow_e)
         if keep_reopen:
             # ✕로 직접 닫은 경우: 밤이 끝날 때까지 다시 열 수 있는 작은 버튼 유지
-            b = tk.Button(self.root, text="🔪 마피아 밀담", command=self._mafia_room_open,
-                          bg="#b91c1c", fg="white", relief="flat", bd=0,
-                          highlightthickness=0, cursor="hand2", font=M_FONT_HELP)
+            b = emoji_render.make_pill_button(
+                self.root, "🔪 마피아 밀담", self._mafia_room_open, bg="#b91c1c", fg="white",
+                hover_bg="#ef4444", font_path=emoji_render.FONT_PATH_REGULAR,
+                font_size=POPUP_BTN_PX, radius=8, pad_x=12, pad_y=4)
             self._mafia_room_place(b)
-            emoji_render.apply(b, M_FONT_HELP)
             self._mafia_room_mini = b
 
     def _mafia_room_append(self, who, text):
