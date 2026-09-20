@@ -283,7 +283,7 @@ class MafiaNightMixin:
                 return emoji_render.make_pill_button(
                     parent, txt, lambda nn=n: self._apply_night_pick(nn, "police"),
                     bg=bg_val, fg=fg_val, hover_bg="#4b5563" if not chosen else None,
-                    font_path=emoji_render.FONT_PATH_REGULAR, font_size=9,
+                    font_path=emoji_render.FONT_PATH_REGULAR, font_size=POPUP_BTN_PX,
                     radius=8, pad_x=10, pad_y=4, min_w=90, state=state_val
                 )
             self._grid_candidates_centered(row, cand_names, _mk_police_btn, padx=4, pady=4)
@@ -305,7 +305,7 @@ class MafiaNightMixin:
             return emoji_render.make_pill_button(
                 parent, lbl, lambda nn=n, r=role: self._apply_night_pick(nn, r),
                 bg="#374151", fg="white", hover_bg="#4b5563",
-                font_path=emoji_render.FONT_PATH_REGULAR, font_size=9,
+                font_path=emoji_render.FONT_PATH_REGULAR, font_size=POPUP_BTN_PX,
                 radius=8, pad_x=10, pad_y=4, min_w=90
             )
         self._grid_candidates_centered(row, cands, _mk_night_btn, padx=4, pady=4)
@@ -461,7 +461,7 @@ class MafiaNightMixin:
         """v1.61 — 마피아 팀 공모 조율(호스트 전용). 코어는 마피아 전원의 지목이
         정확히 같아야 살해를 인정하는데, AI 마피아는 밤 시작 때 각자 무작위로
         골라 두므로 마피아가 둘 이상이면 거의 항상 갈려 살해가 무효였다.
-        규칙: ① 사람 마피아가 고른 게 있으면 그중 가장 먼저 고른 대상이 팀 결정,
+        규칙: ① 사람 마피아가 고른 게 있으면 그중 '가장 먼저 최종 선택을 끝낸' 사람의 대상이 팀 결정,
         ② 없으면 AI들이 고른 것 중 최다(동률이면 그중 무작위)로 AI 전원 통일.
         결정된 대상은 모든 생존 마피아의 지목으로 기록하고 사람 마피아에게 알린다."""
         import random as _rr

@@ -244,7 +244,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         self._launch_game_with_recruits()
 
     def _start_recruitment(self):
-        self._mafia_ident = {}      # 새 모집 — 이전 판의 이름·접속 주소 묶음을 버린다
+        self._reset_ident()         # 새 모집 — 이전 판의 이름·접속 주소 묶음과 사칭 안내 기록을 버린다
         self._recruiting = True
         me = getattr(self.engine, "name", None) or "방장"
         self._recruiter_host = me
@@ -334,25 +334,25 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         return random_mod.sample(list(ALL_PERSONAS), need)
 
     def _launch_game_with_recruits(self):
-        self._recruiting = False
-        if hasattr(self, "mafia_cancel_recruit_btn"):
-            self.mafia_cancel_recruit_btn.pack_forget()
-        if hasattr(self, "mafia_join_btn"):
-            self.mafia_join_btn.pack_forget()
-
         me = getattr(self.engine, "name", None) or "나"
         humans = list(getattr(self, "_recruited_humans", []))
         if me not in humans:
             humans.insert(0, me)
 
         if len(humans) >= MAX_PLAYERS:
-            # 사람이 최대 인원(10명)을 채우면 AI 자리(최소 1명)가 없다 — 예전엔 검사가 없어
-            # 11명 이상이어도 그냥 시작돼 10인 직업표가 조용히 적용됐다.
+            # 사람이 최대 인원(10명)을 채우면 AI 자리(최소 1명)가 없다 — 예전엔 검사가 없어 11명 이상이어도
+            # 그냥 시작됐다. 이 검사는 반드시 '상태를 바꾸기 전에' 해야 한다: 예전 수정은 모집 종료·버튼
+            # 숨김을 먼저 해 놓고 거절해서, 거절된 뒤 모집이 이미 끝나 있었다. 지금은 모집을 그대로 둔다.
             self.add_mafia_system(
                 f"⚠ 게임 시작 실패 — 참가자가 너무 많습니다(사람 {len(humans)}명). "
                 f"사람은 최대 {MAX_PLAYERS - 1}명까지이고 AI가 최소 1명 함께합니다.")
-            self.mafia_start_btn.configure(text="📢 참가자 모집", state="normal")
             return
+
+        self._recruiting = False
+        if hasattr(self, "mafia_cancel_recruit_btn"):
+            self.mafia_cancel_recruit_btn.pack_forget()
+        if hasattr(self, "mafia_join_btn"):
+            self.mafia_join_btn.pack_forget()
 
         with self.core.lock:
             self.core.lobby_reset()

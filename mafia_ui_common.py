@@ -81,6 +81,19 @@ def _role_was(role):
     return f"{label}{'이었' if has_batchim else '였'}습니다"
 
 
+# ---- 팝업 글자 크기 통일 ----
+# 알약 버튼(emoji_render)은 PIL로 글자를 그려 font_size가 '픽셀'인데, 같은 팝업의 Tk 라벨/제목은 '포인트'
+# (emoji_render.apply가 pt→px로 환산)라서, 예전에는 버튼 글자(9~10px)가 라벨(12px)·제목(16px)보다
+# 유독 작고 얇아 보였다(경찰 조사 팝업 등). 팝업의 버튼 글자는 아래 상수로 포인트 기준에 맞춘다.
+def pt_px(pt):
+    """포인트 → 픽셀(96dpi). emoji_render.apply와 같은 환산."""
+    return round(pt * 96 / 72)
+
+
+POPUP_BTN_PX = pt_px(10)         # 후보 선택·찬반 같은 주 버튼 (M_FONT_BODY 10pt와 같은 크기)
+POPUP_SMALL_BTN_PX = pt_px(9)    # 기권·닫기·채팅 보내기 같은 보조 버튼 (M_FONT_HELP 9pt와 같은 크기)
+
+
 __all__ = [
     "applog",
     "os",
@@ -146,4 +159,7 @@ __all__ = [
     "_role_icon_label",
     "_role_kr",
     "_role_was",
+    "pt_px",
+    "POPUP_BTN_PX",
+    "POPUP_SMALL_BTN_PX",
 ]

@@ -172,7 +172,7 @@ class MafiaVoteMixin:
             return emoji_render.make_pill_button(
                 parent, n, lambda nn=n: self._popup_vote(nn),
                 bg=M_BTN_BG, fg=M_TEXT_LIGHT, hover_bg="#374151",
-                font_path=emoji_render.FONT_PATH_REGULAR, font_size=10,
+                font_path=emoji_render.FONT_PATH_REGULAR, font_size=POPUP_BTN_PX,
                 radius=8, pad_x=10, pad_y=6, min_w=96
             )
         self._vote_btns = self._grid_candidates_centered(frame, alive, _mk_vote_btn)
@@ -180,7 +180,7 @@ class MafiaVoteMixin:
         ab = emoji_render.make_pill_button(
             body, "기권", lambda: self._popup_vote(None),
             bg="#111827", fg="#9ca3af", hover_bg="#374151",
-            font_path=emoji_render.FONT_PATH_REGULAR, font_size=9,
+            font_path=emoji_render.FONT_PATH_REGULAR, font_size=POPUP_SMALL_BTN_PX,
             radius=6, pad_x=14, pad_y=4
         )
         ab.pack(pady=(0, 10))
@@ -639,14 +639,14 @@ class MafiaVoteMixin:
             return emoji_render.make_pill_button(
                 parent, n, lambda nn=n: self._cast_revote(nn),
                 bg=M_BTN_BG, fg=M_TEXT_LIGHT, hover_bg="#374151",
-                font_path=emoji_render.FONT_PATH_REGULAR, font_size=10,
+                font_path=emoji_render.FONT_PATH_REGULAR, font_size=POPUP_BTN_PX,
                 radius=8, pad_x=10, pad_y=6, min_w=96
             )
         self._revote_btns = self._grid_candidates_centered(row, cand_names, _mk_revote_btn)
         skip = emoji_render.make_pill_button(
             body, "기권", lambda: self._cast_revote(None),
             bg="#1f2937", fg="#9ca3af", hover_bg="#374151",
-            font_path=emoji_render.FONT_PATH_REGULAR, font_size=9,
+            font_path=emoji_render.FONT_PATH_REGULAR, font_size=POPUP_SMALL_BTN_PX,
             radius=6, pad_x=14, pad_y=4
         )
         skip.pack(pady=(4, 10))
@@ -943,7 +943,7 @@ class MafiaVoteMixin:
             b_close = emoji_render.make_pill_button(
                 body, "확인 (닫기)", _close_early,
                 bg="#374151", fg="white", hover_bg="#4b5563",
-                font_path=emoji_render.FONT_PATH_REGULAR, font_size=9,
+                font_path=emoji_render.FONT_PATH_REGULAR, font_size=POPUP_SMALL_BTN_PX,
                 radius=6, pad_x=12, pad_y=4
             )
             b_close.pack(pady=(0, 10))
@@ -990,14 +990,14 @@ class MafiaVoteMixin:
         _btn_yes = emoji_render.make_pill_button(
             row, "🔪 처형 찬성", lambda: self._cast_defense(name, True),
             bg="#dc2626", fg="white", hover_bg="#ef4444",
-            font_path=emoji_render.FONT_PATH_BOLD, font_size=10,
+            font_path=emoji_render.FONT_PATH_BOLD, font_size=POPUP_BTN_PX,
             radius=8, pad_x=_defense_pad_x, pad_y=6, min_w=_defense_btn_w
         )
         _btn_yes.pack(side="left", padx=6)
         _btn_no = emoji_render.make_pill_button(
             row, "🕊 만류", lambda: self._cast_defense(name, False),
             bg="#15803d", fg="white", hover_bg="#16a34a",
-            font_path=emoji_render.FONT_PATH_BOLD, font_size=10,
+            font_path=emoji_render.FONT_PATH_BOLD, font_size=POPUP_BTN_PX,
             radius=8, pad_x=_defense_pad_x, pad_y=6, min_w=_defense_btn_w
         )
         _btn_no.pack(side="left", padx=6)

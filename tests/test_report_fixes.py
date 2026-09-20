@@ -293,6 +293,9 @@ class _GateStub(MafiaUIMixin):
     def _mafia_peer_of(self, name):
         return self.peers.get(name)
 
+    def _mafia_peer_raw(self, name):
+        return self.peers.get(name)
+
 
 _cl = _GateStub()                       # 원격 참가자(B) 입장
 for _t in ("hsay", "asay", "sys", "hdm", "start", "night", "day", "death", "end", "tally", "vote",
@@ -676,10 +679,14 @@ check("반대로 사람이 먼저 고르면 사람의 선택이 팀 결정", _o.
 class _IdStub(_GateStub):
     def __init__(self, **kw):
         super().__init__(**kw)
-        self.notes = []
+        self.notes = []          # 이 PC 화면에만 보이는 안내(add_mafia_host_dm)
+        self.public = []         # 전원에게 브로드캐스트되는 시스템 메시지(add_mafia_system)
+
+    def add_mafia_host_dm(self, text):
+        self.notes.append(text)
 
     def add_mafia_system(self, text):
-        self.notes.append(text)
+        self.public.append(text)
 
 
 _KA, _KB, _KX = ("10.0.0.1", 50707), ("10.0.0.2", 50707), ("10.0.0.9", 50707)
@@ -773,10 +780,174 @@ class _LaunchStub(MafiaUIMixin):
 
 
 _ls = _LaunchStub(10)
+_ls._recruiting = True
+_ls.mafia_cancel_recruit_btn = SimpleNamespace(pack_forget=lambda: _ls.btn.append({"forgot": "cancel"}))
+_ls.mafia_join_btn = SimpleNamespace(pack_forget=lambda: _ls.btn.append({"forgot": "join"}))
 _ls._launch_game_with_recruits()
 check("사람 10명(최대 인원)이면 AI 자리가 없어 시작을 거절하고 안내",
-      any("너무 많" in t for t in _ls.msgs) and _ls.core.players == {} and not getattr(_ls, "mafia_active", False)
-      and _ls.btn and "모집" in _ls.btn[-1].get("text", ""))
+      any("너무 많" in t for t in _ls.msgs) and _ls.core.players == {} and not getattr(_ls, "mafia_active", False))
+check("거절해도 모집 상태·버튼은 그대로(예전엔 거절 전에 모집을 끝내 버려 전원이 재신청해야 했음)",
+      _ls._recruiting is True and _ls.btn == [])
+
+# ============================================================
+# v1.66 — 송신 경로 신원 / 사칭 안내 도배 방지 / 인증 전 초기화 금지 / 모집 인원 상한 / 선택 순서
+# ============================================================
+import threading as _th
+import time as _tm
+
+
+class _PeerEngine:
+    """접속 상대 목록을 흉내 낸다(peers {(ip, port): {"name", "last"}}), 보낸 패킷을 기록한다."""
+
+    def __init__(self, name="방장", peers=None):
+        self.name = name
+        self.plock = _th.RLock()
+        self.peers = peers or {}
+        self.sent = []
+
+    def get_alias(self, key):
+        return ""
+
+    def send_message(self, ip, port, pkt):
+        self.sent.append(((ip, port), pkt))
+
+
+class _SendStub(MafiaUIMixin):
+    def __init__(self, peers, me="방장"):
+        self.engine = _PeerEngine(me, peers)
+
+
+_NOW = _tm.time()
+_K_ATT, _K_REAL = ("10.0.0.66", 50707), ("10.0.0.2", 50707)
+_dup = {_K_ATT: {"name": "이팀장B", "last": _NOW}, _K_REAL: {"name": "이팀장B", "last": _NOW}}   # 공격자가 먼저 접속
+
+# ---- A. 비밀 패킷의 수신자도 이름이 아니라 묶인 접속 주소로 정한다 ----
+_ss = _SendStub(dict(_dup))
+_ss._mafia_send_private("이팀장B", "hdm", target="이팀장B", text="당신의 직업은 마피아입니다")
+check("[참고] 묶음이 없으면 이름이 같은 '첫' 접속자에게 감(옛 동작 — 사칭자가 먼저 접속했다면 그쪽으로)",
+      _ss.engine.sent[-1][0] == _K_ATT)
+_ss._ident()["이팀장B"] = _K_REAL
+_ss._mafia_send_private("이팀장B", "hdm", target="이팀장B", text="당신의 직업은 마피아입니다")
+_ss._mafia_send_private("이팀장B", "mafia_say", name="미나", text="오늘은 누구 노릴까")
+check("이름이 접속 주소에 묶여 있으면 같은 이름의 다른 접속자가 먼저 있어도 묶인 주소로만 보냄(직업·비밀 대화·조사 결과)",
+      [k for k, _p in _ss.engine.sent[1:]] == [_K_REAL, _K_REAL] and _ss._mafia_peer_of("이팀장B") == _K_REAL)
+check("묶음이 없는 이름은 기존처럼 이름으로 찾음(별칭 등 호환)",
+      _SendStub({_K_REAL: {"name": "소피", "last": _NOW}})._mafia_peer_of("소피") == _K_REAL)
+check("같은 이름을 쓰는 접속자가 둘 이상 접속 중이면 '모호'하다고 판단",
+      _SendStub(dict(_dup))._mafia_name_ambiguous("이팀장B") is True)
+check("한쪽이 오래전 소식이 끊긴 옛 항목이면 모호하지 않음(재접속한 정상 참가자를 막지 않음)",
+      _SendStub({_K_ATT: {"name": "이팀장B", "last": _NOW - 100000},
+                 _K_REAL: {"name": "이팀장B", "last": _NOW}})._mafia_name_ambiguous("이팀장B") is False)
+
+
+class _JoinStub(MafiaUIMixin):
+    """방장(호스트) 쪽 모집 수신부."""
+
+    def __init__(self, peers, roster):
+        self.engine = _PeerEngine("김재무A", peers)
+        self._recruiter_host = "김재무A"
+        self._recruiting = True
+        self.mafia_active = False
+        self._recruited_humans = list(roster)
+        self.mafia_start_btn = SimpleNamespace(config=lambda **k: None)
+        self.notes, self.public, self.sent, self.cast = [], [], [], []
+
+    def _mafia_is_host(self):
+        return True
+
+    def add_mafia_host_dm(self, t):
+        self.notes.append(t)
+
+    def add_mafia_system(self, t):
+        self.public.append(t)
+
+    def _mafia_broadcast(self, ev_type, **kw):
+        self.cast.append((ev_type, kw))
+
+    def _mafia_send_private(self, who, ev_type, **kw):
+        self.sent.append((who, ev_type, kw.get("text", "")))
+
+
+_jn = _JoinStub(dict(_dup), ["김재무A"])
+_jn._on_mafia_proto_msg(encode("recruit_join", name="이팀장B"), "이팀장B", _K_REAL)
+check("같은 이름 접속자가 둘 이상이면 참가 신청을 받지 않고(어느 쪽에도 이름을 묶지 않고) 안내",
+      _jn._recruited_humans == ["김재무A"] and _jn._ident().get("이팀장B") is None
+      and any("둘 이상" in t for t in _jn.notes))
+_jn = _JoinStub({_K_REAL: {"name": "이팀장B", "last": _NOW}}, ["김재무A"])
+_jn._on_mafia_proto_msg(encode("recruit_join", name="이팀장B"), "이팀장B", _K_REAL)
+check("접속자가 한 명뿐이면 정상 참가되고 이름이 그 접속 주소에 묶임",
+      _jn._recruited_humans == ["김재무A", "이팀장B"] and _jn._ident().get("이팀장B") == _K_REAL)
+
+# ---- B. 모집 인원 상한(사람 최대 MAX_PLAYERS-1명) — 참가 신청 시점에 막고 신청자에게 알린다 ----
+_full = ["김재무A"] + ["p%d" % i for i in range(mafia_config.MAX_PLAYERS - 2)]      # 사람 9명
+_jn = _JoinStub({_K_REAL: {"name": "새사람", "last": _NOW}}, _full)
+_jn._on_mafia_proto_msg(encode("recruit_join", name="새사람"), "새사람", _K_REAL)
+check("사람이 최대(9명)면 10번째 참가 신청은 받지 않음", len(_jn._recruited_humans) == 9 and "새사람" not in _jn._recruited_humans)
+check("거절된 신청자에게 '가득 찼다'는 개인 쪽지를 보내고 명단을 다시 알려 신청자 화면을 되돌림",
+      any(w == "새사람" and "가득" in t for w, _e, t in _jn.sent) and any(e == "recruit_update" for e, _k in _jn.cast))
+_jn = _JoinStub({_K_REAL: {"name": "새사람", "last": _NOW}}, _full[:-1])
+_jn._on_mafia_proto_msg(encode("recruit_join", name="새사람"), "새사람", _K_REAL)
+check("8명일 때 신청은 받아서 9명이 됨", len(_jn._recruited_humans) == 9 and "새사람" in _jn._recruited_humans)
+
+# ---- C. 사칭 안내는 로컬 전용·이름별 1회·모집당 최대 5회 ----
+_c = _IdStub(host="김재무A", active=False)
+_c._ident()["김재무A"] = _KA
+for _port in range(50000, 50040):              # 포트는 보내는 쪽이 정하는 값 — 바꿔 가며 40번 위조
+    _c._proto_authorized("end", {}, "김재무A", ("10.0.0.9", _port))
+check("포트만 바꿔 위조를 40번 보내도 안내는 1번(도배 방지)", len([t for t in _c.notes if "김재무A" in t]) == 1)
+check("사칭 안내는 이 PC 화면에만 표시하고 전원에게 브로드캐스트하지 않음", _c.public == [])
+for _i in range(10):
+    _c._ident()["참가자%d" % _i] = _KB
+    _c._proto_authorized("vote_cast", {"voter": "참가자%d" % _i}, "참가자%d" % _i, _KX)
+check("서로 다른 이름을 잔뜩 사칭해도 한 모집에 최대 5번만 안내", len(_c.notes) == 5)
+_c._reset_ident()
+check("새 모집이 시작되면 안내 기록도 초기화", _c._ident() == {} and len(_c._mafia_ident_noted) == 0)
+
+# ---- D. 인증에 실패한 recruit_start는 기존 이름·주소 묶음을 건드리지 못한다 ----
+_d = _IdStub(host=None, active=False)
+_d._proto_authorized("recruit_start", {"host": "김재무A"}, "김재무A", _KA)
+_d._recruiter_host = "김재무A"
+_before = dict(_d._ident())
+check("방장이 아닌 사람이 남의 이름을 방장으로 적은 모집 시작은 거부되고 묶음을 지우지 못함",
+      _d._proto_authorized("recruit_start", {"host": "김재무A"}, "해커", _KX) is False
+      and _d._ident() == _before and _d._proto_authorized("end", {}, "김재무A", _KA))
+check("본인을 방장으로 알린 진짜 새 모집만 묶음을 초기화(이전 판 묶음은 버려짐)",
+      _d._proto_authorized("recruit_start", {"host": "김재무A"}, "김재무A", _KA)
+      and _d._ident().get("김재무A") == _KA and len(_d._ident()) == 1)
+
+# ---- 5. '먼저 고른' = 각자의 마지막 선택이 빨랐던 순서 ----
+_g = GameCore("t")
+for _n, _ai in (("사람", False), ("사람2", False), ("영희", True), ("철수", True), ("의사D", True)):
+    _g.join(_n, _ai)
+_g.players["사람"]["role"] = _g.players["사람2"]["role"] = "mafia"
+_g.phase = Phase.NIGHT
+_g.mafia_night_vote("사람", "철수")
+_g.mafia_night_vote("사람2", "영희")
+_g.mafia_night_vote("사람", "의사D")           # 사람이 마음을 바꿔 다시 고름
+check("다시 고른 사람은 순서가 뒤로 감(마지막 선택 시각 순)", list(_g.night_targets) == ["사람2", "사람"])
+_o = _HostNightStub()
+_o.core.players["사람"]["role"] = "mafia"
+_o.core.players["사람2"] = {"role": "mafia", "alive": True, "is_ai": False, "color": "#fff", "addr": None}
+_o.core.players["마피아M"]["role"] = "citizen"
+_o.core.mafia_night_vote("사람", "철수")
+_o.core.mafia_night_vote("사람2", "영희")
+_o.core.mafia_night_vote("사람", "의사D")
+_o._mafia_kill_plan = None
+_o._reconcile_mafia_night()
+check("A가 먼저 골랐다 바꾼 뒤 B가 골랐던 상황에서는 먼저 최종 선택을 끝낸 B의 선택이 팀 결정", _o.core.night_target == "영희")
+
+# ---- 팝업 글자 크기: 버튼 글자를 라벨·제목과 같은 포인트 기준으로 통일 ----
+import ast as _ast2
+from mafia_ui_common import POPUP_BTN_PX, POPUP_SMALL_BTN_PX, pt_px
+check("팝업 버튼 글자 크기는 10pt/9pt를 픽셀로 환산한 값(13px/12px)",
+      pt_px(10) == 13 and pt_px(9) == 12 and POPUP_BTN_PX == 13 and POPUP_SMALL_BTN_PX == 12)
+_literal = []
+for _f in ("mafia_ui_night.py", "mafia_ui_vote.py", "mafia_ui_secret.py"):
+    for _n in _ast2.walk(_ast2.parse(open(os.path.join(ROOT, _f), encoding="utf-8").read())):
+        if isinstance(_n, _ast2.keyword) and _n.arg == "font_size" and isinstance(_n.value, _ast2.Constant):
+            _literal.append(f"{_f}:{_n.value.value}")
+check("밤·투표·비밀방 팝업의 알약 버튼이 글자 크기를 숫자로 직접 쓰지 않고 공용 상수를 씀(9px·10px 혼용 재발 방지)",
+      _literal == [])
 
 # ============================================================
 # mafia_ui 분할 구조 무결성 — 믹스인 모듈로 나눈 뒤에도 깨지지 않게 지킨다

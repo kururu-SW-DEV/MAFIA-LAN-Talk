@@ -74,7 +74,7 @@ class MafiaSecretMixin:
         ent.bind("<Return>", self._mafia_room_send)
         emoji_render.make_pill_button(row, "보내기", self._mafia_room_send, bg="#b91c1c", fg="white",
                                       hover_bg="#ef4444", font_path=emoji_render.FONT_PATH_REGULAR,
-                                      font_size=9, radius=6, pad_x=10, pad_y=3).pack(side="right")
+                                      font_size=POPUP_SMALL_BTN_PX, radius=6, pad_x=10, pad_y=3).pack(side="right")
         self._mafia_room, self._mafia_room_txt, self._mafia_room_ent = f, txt, ent
         for who, t in getattr(self, "_mafia_room_history", []):
             self._mafia_room_insert(who, t)
@@ -443,7 +443,7 @@ class MafiaSecretMixin:
         emoji_render.make_pill_button(
             ent_f, "보내기", self._ghost_send, bg=M_HOST, fg="white",
             hover_bg="#9333ea", font_path=emoji_render.FONT_PATH_REGULAR,
-            font_size=10, radius=6, pad_x=12, pad_y=4
+            font_size=POPUP_BTN_PX, radius=6, pad_x=12, pad_y=4
         ).pack(side="right")
         # v1.13 — 사망 AI가 유령방에서 수다를 떠는 자동 발화(1~5초 후에 1~2건)
         self._kick_ghost_ai_chat()

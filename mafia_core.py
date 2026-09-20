@@ -236,6 +236,10 @@ class GameCore:
                 return False
             if not target or target == mafia_name or not self.players.get(target, {}).get("alive"):
                 return False
+            # 다시 고르면 맨 뒤로 보낸다 — night_targets의 순서가 '각자의 마지막 선택이 빨랐던 순서'가
+            # 되어, 인간 마피아가 갈릴 때 "가장 먼저 최종 선택을 끝낸 사람"의 선택이 팀 결정이 된다.
+            # (dict는 기존 키를 덮어써도 원래 자리를 지켜서, A가 1초에 고르고 20초에 바꿔도 A가 계속 앞이었다.)
+            self.night_targets.pop(mafia_name, None)
             self.night_targets[mafia_name] = target
             return True
 

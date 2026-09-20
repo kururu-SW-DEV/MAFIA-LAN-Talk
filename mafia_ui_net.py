@@ -48,8 +48,8 @@ class MafiaNetMixin:
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
 
-    def _mafia_peer_of(self, name):
-        """별칭 이름에 대응하는 (ip, port) 찾기."""
+    def _mafia_peer_raw(self, name):
+        """접속 상대 목록에서 표시 이름(별칭)이 같은 '첫' 상대의 (ip, port). 이름만 보는 조회다."""
         eng = getattr(self, "engine", None)
         if eng is None:
             return None
@@ -60,6 +60,37 @@ class MafiaNetMixin:
                 if alias == name or pname == name:
                     return (ip, port)
         return None
+
+    def _mafia_peer_of(self, name):
+        """이름에 대응하는 (ip, port). 이미 접속 주소에 묶인 이름(_mafia_ident)이면 그 주소를 쓴다.
+
+        예전에는 언제나 '표시 이름이 같은 첫 피어'에게 보내서, 표시 이름을 피해자와 같게 하고 먼저
+        접속한 사람이 직업 통보·마피아 비밀 대화·경찰 조사 결과를 대신 받을 수 있었다(수신 검증만
+        고치고 송신 경로는 그대로였던 구멍). 묶인 주소가 없을 때만 이름으로 찾는다."""
+        bound = self._ident().get(name)
+        if bound is not None:
+            return bound
+        return self._mafia_peer_raw(name)
+
+    def _mafia_name_ambiguous(self, name):
+        """지금 접속 중인 상대 중 같은 이름(별칭)을 쓰는 사람이 둘 이상인가. 그러면 누가 진짜인지
+        알 수 없어 이름을 어느 한쪽 주소에 묶을 수 없다."""
+        eng = getattr(self, "engine", None)
+        if eng is None or not name:
+            return False
+        try:
+            now = time.time()
+            n = 0
+            with eng.plock:
+                for (ip, port), p in eng.peers.items():
+                    if now - p.get("last", 0) >= PEER_TIMEOUT:
+                        continue                       # 오래 소식 없는 옛 항목은 세지 않는다
+                    if (eng.get_alias((ip, port)) or "") == name or p.get("name", "") == name:
+                        n += 1
+            return n > 1
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+            return False
 
     def _apply_mafia_mates(self):
         """v1.61 — 내가 마피아일 때 동료 마피아를 내 core에 반영(밤 살해 후보에서
@@ -152,22 +183,46 @@ class MafiaNetMixin:
             m = self._mafia_ident = {}
         return m
 
+    def _reset_ident(self):
+        """새 모집 — 이전 판의 이름·접속 주소 묶음과 사칭 안내 기록을 함께 비운다."""
+        self._mafia_ident = {}
+        self._mafia_ident_noted = set()
+
+    _IDENT_NOTICE_MAX = 5      # 한 모집 동안 사용자에게 알리는 사칭 안내의 최대 횟수
+
     def _note_impersonation(self, claimed, key):
-        """이미 다른 접속 주소에 묶인 이름으로 요청이 왔을 때(사칭 또는 주소 변경) 한 번만 알린다."""
+        """이미 다른 접속 주소에 묶인 이름으로 요청이 왔을 때(사칭 또는 주소 변경) 알린다.
+
+        안내는 (1) 이름별로 한 번만, (2) 한 모집당 최대 _IDENT_NOTICE_MAX번, (3) 이 PC 화면에만
+        표시한다. 예전에는 (이름, 주소·포트)마다 알렸는데 포트는 보내는 쪽이 정하는 값이라 포트만
+        바꿔 보내면 매번 새 안내가 되고, 그 안내가 호스트에서 전원에게 브로드캐스트돼 도배할 수 있었다."""
         seen = getattr(self, "_mafia_ident_noted", None)
         if seen is None:
             seen = self._mafia_ident_noted = set()
-        if (claimed, key) in seen:
+        if claimed in seen or len(seen) >= self._IDENT_NOTICE_MAX:
             return
-        seen.add((claimed, key))
+        seen.add(claimed)
         try:
             applog.log("mafia_ident_mismatch",
                        detail=f"name={claimed} from={key} bound={self._ident().get(claimed)}")
-            self.add_mafia_system(
+            self.add_mafia_host_dm(
                 f"⚠ '{claimed}' 이름으로 온 요청이 처음 확인된 접속 주소와 달라 무시했습니다"
                 f"({key[0]}). 다른 PC가 이름을 사칭했거나 그 사람의 접속 주소가 바뀐 경우입니다.")
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
+
+    def _claim_matches(self, claimed, sender_name, peer=None):
+        """이름 주장이 이 패킷의 송신자와 맞는지만 본다(묶음을 읽지도 쓰지도 않는다)."""
+        if not claimed:
+            return False
+        if peer is None or claimed == sender_name:
+            return claimed == sender_name
+        try:
+            pk = self._mafia_peer_raw(claimed)
+            return pk is not None and tuple(pk) == tuple(peer)
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+            return False
 
     def _sender_is(self, claimed, sender_name, peer=None):
         """본문이 주장하는 이름(claimed)이 실제 송신자인지.
@@ -211,10 +266,13 @@ class MafiaNetMixin:
                 return False            # 방장에게 방장 전용 이벤트가 올 이유가 없다
             if t == "recruit_start":
                 # 모집을 여는 사람은 본인을 방장으로 알려야 하고, 진행 중인 판의 방장은 바꿀 수 없다
+                claimed = ev.get("host")
+                if not self._claim_matches(claimed, sender_name, peer):
+                    return False                  # 본인을 방장으로 알리지 않은 패킷은 묶음도 건드리지 않는다
                 active = getattr(self, "mafia_active", False)
                 if not active:
-                    self._mafia_ident = {}        # 새 모집 — 이전 판의 이름·주소 묶음을 버린다
-                if not self._sender_is(ev.get("host"), sender_name, peer):
+                    self._reset_ident()           # 검증을 통과한 새 모집 — 이전 판의 묶음을 버린다
+                if not self._sender_is(claimed, sender_name, peer):
                     return False
                 if active and host and not self._sender_is(host, sender_name, peer):
                     return False
@@ -224,6 +282,18 @@ class MafiaNetMixin:
         if field:
             if t == "mafia_say" and host and self._sender_is(host, sender_name, peer):
                 return True             # 방장이 중계하는 AI 마피아 발언·목표 안내
+            if t == "recruit_join" and self._ident().get(ev.get(field)) is None \
+                    and self._mafia_name_ambiguous(ev.get(field)):
+                # 같은 이름을 쓰는 상대가 둘 이상 접속 중이면 누가 진짜인지 알 수 없다 — 어느 한쪽에
+                # 이름을 묶으면 사칭한 쪽이 직업 통보·비밀 대화를 대신 받게 되므로 참가를 받지 않는다.
+                try:
+                    applog.log("mafia_join_ambiguous", detail=f"name={ev.get(field)} from={sender_name}")
+                    self.add_mafia_host_dm(
+                        f"⚠ '{ev.get(field)}' 이름을 쓰는 접속자가 둘 이상이라 참가를 받지 않았습니다. "
+                        "표시 이름을 서로 다르게 바꾼 뒤 다시 신청하세요.")
+                except Exception as _swallow_e:
+                    applog.swallowed(_swallow_e)
+                return False
             return self._sender_is(ev.get(field), sender_name, peer)
         return True
 
@@ -507,7 +577,16 @@ class MafiaNetMixin:
             pname = ev.get("name")
             me = getattr(self.engine, "name", None)
             if getattr(self, "_recruiting", False) and getattr(self, "_recruiter_host", None) == me:
-                if pname and pname not in self._recruited_humans:
+                if pname and pname not in self._recruited_humans \
+                        and len(self._recruited_humans) >= MAX_PLAYERS - 1:
+                    # 사람은 최대 MAX_PLAYERS-1명(AI 최소 1명 자리). 예전엔 상한이 없어 10명이 모인 뒤에야
+                    # 시작이 거절됐고, 그때 모집 상태가 이미 망가져 전원이 다시 신청해야 했다.
+                    self.add_mafia_host_dm(
+                        f"⚠ '{pname}' 님의 참가 신청을 받지 못했습니다 — 사람은 최대 {MAX_PLAYERS - 1}명까지입니다.")
+                    self._mafia_send_private(pname, "hdm", target=pname,
+                                             text=f"⚠ 모집 인원이 가득 찼습니다(사람 최대 {MAX_PLAYERS - 1}명).")
+                    self._mafia_broadcast("recruit_update", host=me, players=self._recruited_humans)  # 신청자 화면을 되돌린다
+                elif pname and pname not in self._recruited_humans:
                     self._recruited_humans.append(pname)
                     self.add_mafia_system(f"🙋 '{pname}' 님이 참가 신청했습니다! (현재 {len(self._recruited_humans)}명)")
                     self.mafia_start_btn.config(text=f"🎮 게임 시작 (인간 {len(self._recruited_humans)}명)")
