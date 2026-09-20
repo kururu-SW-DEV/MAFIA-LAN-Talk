@@ -37,6 +37,9 @@ scratch/
 docs/LAN-Talk-serverfree-*.zip
 # 버전별 개발 기록(로컬에서만 보관 — 저장소에서는 제외)
 docs/개발기록/
+# 랜톡 원본 사용 설명서·스티커 시안(로컬에서만 보관)
+docs/README.md
+docs/sticker_proof.html
 
 # ── 백업/임시 파일 ──────────────────────────────────────────
 *.bak
