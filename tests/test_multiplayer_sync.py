@@ -69,11 +69,19 @@ from dialogs import DialogsMixin
 from app import App as RealApp
 
 
+NIGHT_PROMPTS = []            # 밤 행동 프롬프트 수집(실제로 LLM 경로를 탔는지 확인용)
+
+
 def fake_llm_call(messages, max_tokens=350, timeout=45):
     sys_c = messages[0]["content"] if messages else ""
     user_c = messages[-1]["content"] if messages else ""
     m = re.search(r"참가자 '([^']+)'", sys_c)
     name = m.group(1) if m else "AI"
+    if "[밤 행동" in user_c:
+        NIGHT_PROMPTS.append(user_c)
+        cd = re.search(r"후보(?:\(시민 쪽 생존자\))?:\s*([^.\n]+)\.", user_c)
+        pool = [c.strip() for c in (cd.group(1).split(",") if cd else []) if c.strip()]
+        return "선택 " + (sorted(pool)[-1] if pool else "")
     if "준비완료" in user_c:
         return f"{name} 준비완료"
     if "투표" in user_c and "생존 후보" in user_c:
@@ -554,6 +562,58 @@ try:
     appA.core.players["이팀장B"]["role"] = "citizen"
     appA.core.night_targets.clear()
     appA._mafia_kill_plan = None
+
+    # ===================== 밤 AI 행동: 경찰·의사·마피아가 LLM으로 판단 (실제 스레드·큐 경로) =====================
+    pump(lambda: False, timeout=3.0)              # 앞 시나리오의 늦은 AI 비밀 답장이 끝나길 기다림
+    _others = [p_ for p_ in appA.ai.players if p_ is not ai_pl]
+    _pol, _doc = _others[0], _others[1]
+    for pl_, role_ in ((_pol, "police"), (_doc, "doctor")):
+        pl_.role, pl_.alive, pl_.booted = role_, True, True
+        appA.core.players[pl_.name]["role"] = role_
+        appA.core.players[pl_.name]["alive"] = True
+    appA.core.players[a_nm]["role"] = "mafia"
+    appA.core.phase = Phase.NIGHT
+    appA.core.police_invest.clear(); appA.core.police_report = None
+    appA.core.night_saved = None; appA.core.last_protect = None
+    appA.core.night_targets.clear(); appA.core.night_target = None
+    appA._mafia_kill_plan = None
+    NIGHT_PROMPTS.clear()
+    appA.NIGHT_MAFIA_LLM_MS = 300                 # 테스트에서는 마피아 재판단을 빨리 실행
+    _t0 = time.time()
+    appA._trigger_night_actions()
+    check("밤 AI(경찰·의사): LLM 답으로 조사/보호가 접수됨(무작위 대체 타이머 11초보다 훨씬 이른 시점)",
+          pump(lambda: len(appA.core.police_invest) == 1 and appA.core.night_saved is not None, timeout=8)
+          and time.time() - _t0 < 8)
+    _cands_pol = [n for n in appA.core.players if n != _pol.name]
+    check("밤 AI 경찰: 후보(자기 자신 제외) 중 한 명을 조사함",
+          list(appA.core.police_invest)[0] in _cands_pol)
+    check("밤 AI: 경찰·의사에게 LLM 프롬프트가 실제로 전달됨",
+          any("[밤 행동 — 경찰]" in p_ for p_ in NIGHT_PROMPTS)
+          and any("[밤 행동 — 의사]" in p_ for p_ in NIGHT_PROMPTS))
+    check("밤 AI 마피아: 비밀 대화 뒤 LLM에게 살해 대상을 다시 묻고 그 결과를 AI 지목으로 기록",
+          pump(lambda: any("[밤 행동 — 마피아]" in p_ for p_ in NIGHT_PROMPTS)
+               and ai_m in appA.core.night_targets, timeout=8))
+    _mk = [p_ for p_ in NIGHT_PROMPTS if "[밤 행동 — 마피아]" in p_]
+    check("밤 AI 마피아 프롬프트의 후보에 마피아(호스트 사람·AI 본인)가 없음",
+          bool(_mk) and a_nm not in _mk[0].split("후보(시민 쪽 생존자):")[1].split(".")[0]
+          and ai_m not in _mk[0].split("후보(시민 쪽 생존자):")[1].split(".")[0])
+    # ---- 송신자 검증(실제 네트워크): 원격 참가자 B가 위조 패킷을 호스트 A에게 보낸다 ----
+    appA.core.night_targets.pop(a_nm, None)
+    _cand_forge = next(n for n in appA._mafia_kill_candidates())
+    stubB._mafia_send_private(a_nm, "end", winner="citizen", roles={})                       # 방장 전용 이벤트
+    stubB._mafia_send_private(a_nm, "night_action", actor=a_nm, role="mafia", target=_cand_forge)   # 호스트 이름으로 위조
+    pump(lambda: False, timeout=2.0)
+    check("송신자 검증(실제 네트워크): 원격 참가자가 보낸 가짜 '게임 종료'를 호스트가 무시함",
+          appA.mafia_active and appA.core.phase != Phase.END and appA.core.winner is None)
+    check("송신자 검증(실제 네트워크): 호스트 이름으로 위조한 밤 행동을 호스트가 무시함",
+          a_nm not in appA.core.night_targets)
+    appA.core.day_no += 1                         # 남은 대체 타이머/결과가 이후 시나리오에 섞이지 않게
+    del appA.NIGHT_MAFIA_LLM_MS
+    appA.core.police_invest.clear(); appA.core.night_saved = None; appA.core.night_targets.clear()
+    for pl_ in (_pol, _doc):
+        pl_.role = "citizen"
+        appA.core.players[pl_.name]["role"] = "citizen"
+    appA.core.players[a_nm]["role"] = "mafia"
 
     # 밤이 끝나면(낮) 늦게 도착한 AI 발언은 버려진다
     n_before = len(appA._mafia_room_history)

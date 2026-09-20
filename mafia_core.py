@@ -44,10 +44,16 @@ class GameCore:
 
     def __init__(self, game_id):
         self.game_id = game_id
+        self.lock = threading.RLock()
+        self._reset_state()
+
+    def _reset_state(self):
+        """한 판의 모든 상태를 초기값으로 되돌린다. __init__과 lobby_reset이 함께 쓴다 —
+        필드를 여기 한 곳에만 두어야 새 필드를 추가하고 초기화에서 빠뜨려 판 사이에 상태가
+        새는 일(예: 이전 판의 경찰 조사 결과가 다음 판에 남던 버그)이 안 생긴다."""
         self.phase = Phase.LOBBY
         self.players = {}          # name -> {"role": str, "alive": bool, "is_ai": bool,
                                    #         "color": str, "addr": (ip,port)|None}
-        self.lock = threading.RLock()
         self.day_no = 0
         self.night_target = None        # 밤 마피아 타깃
         self.night_saved = None         # 밤 의사 타깃
@@ -67,15 +73,9 @@ class GameCore:
 
     # ---------- 로비 ----------
     def lobby_reset(self):
+        """로비로 되돌린다 — 새 판을 시작하기 전에 이전 판의 상태를 전부 지운다."""
         with self.lock:
-            self.phase = Phase.LOBBY
-            self.players.clear()
-            self.day_no = 0
-            self.votes.clear()
-            self.winner = None
-            self.night_target = self.night_saved = None
-            self.night_dead.clear()
-            self.log.clear()
+            self._reset_state()
 
     def join(self, name, is_ai, color=None, addr=None):
         with self.lock:

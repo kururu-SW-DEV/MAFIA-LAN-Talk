@@ -223,5 +223,296 @@ check("'아니 김철수 수상하잖아'처럼 모호한 '아니'는 부정으�
 check("'별로야 김철수 말고 이영희 노리자' → 이영희", _ns("별로야 김철수 말고 이영희 노리자", _c2) == ("이영희", {"김철수"}))
 check("'싫어 이영희 노리자'는 서술이 있어 긍정", _ns("싫어 이영희 노리자", _c2) == ("이영희", set()))
 
+# ============================================================
+# ① 새 판을 시작하면 이전 판의 상태가 전부 지워진다 (lobby_reset)
+# ============================================================
+from types import SimpleNamespace
+from mafia_core import GameCore, Phase
+from mafia_net import encode
+
+
+def _dirty_core():
+    c = GameCore("t")
+    c.join("경찰A", False)
+    c.join("미나", True)
+    c.police_invest["미나"] = "mafia"
+    c.police_report = ("미나", "mafia")
+    c.last_protect = "경찰A"
+    c.abstains.add("경찰A")
+    c.voted_history.append({"미나": 2})
+    c.defendant = "미나"
+    c.defense_yes["경찰A"] = True
+    c.night_targets["미나"] = "경찰A"
+    c.votes["경찰A"] = "미나"
+    c.night_target, c.night_saved = "경찰A", "미나"
+    c.night_dead.append("미나")
+    c.day_no, c.winner = 3, "mafia"
+    c.log.append({"x": 1})
+    c.phase = Phase.NIGHT
+    return c
+
+
+_c = _dirty_core()
+_c.lobby_reset()
+_fresh = GameCore("t")
+_leaks = [k for k in vars(_fresh) if k != "lock" and getattr(_c, k) != getattr(_fresh, k)]
+check("lobby_reset이 이전 판 상태를 전부 초기화(새 코어와 완전히 같음)", _leaks == [])
+
+_c = _dirty_core()
+_c.lobby_reset()
+for _n in ("경찰A", "미나"):
+    _c.join(_n, _n == "미나")
+_c.players["경찰A"]["role"], _c.players["미나"]["role"] = "police", "citizen"
+_c.phase = Phase.NIGHT
+check("2판째: 이전 판에서 '마피아'였던 이름을 조사해도 새 판의 실제 역할(시민)로 판정",
+      _c.police_investigate("미나") == "citizen")
+
+_c = _dirty_core()
+_c.lobby_reset()
+for _n in ("경찰A", "미나"):
+    _c.join(_n, False)
+check("2판째: 이전 판의 기권·의사 직전 보호가 남아 있지 않음",
+      _c.abstains == set() and _c.last_protect is None and _c.night_targets == {})
+
+# ============================================================
+# ② [MAFIA1] 송신자 검증
+# ============================================================
+
+
+class _GateStub(MafiaUIMixin):
+    def __init__(self, me="이팀장B", host="김재무A", active=True, is_host=False):
+        self.engine = SimpleNamespace(name=me)
+        self._recruiter_host = host
+        self.mafia_active = active
+        self._is_host = is_host
+        self.peers = {}
+
+    def _mafia_is_host(self):
+        return self._is_host
+
+    def _mafia_peer_of(self, name):
+        return self.peers.get(name)
+
+
+_cl = _GateStub()                       # 원격 참가자(B) 입장
+for _t in ("hsay", "asay", "sys", "hdm", "start", "night", "day", "death", "end", "tally", "vote",
+           "vote_open", "revote_open", "defense_vote_open", "defense_start", "verdict",
+           "recruit_update", "recruit_cancel", "ghost_say"):
+    if not (_cl._proto_authorized(_t, {}, "김재무A") and not _cl._proto_authorized(_t, {}, "해커")):
+        check(f"방장 전용 이벤트 '{_t}': 방장은 통과·다른 사람은 차단", False)
+        break
+else:
+    check("방장 전용 이벤트 19종: 방장이 보내면 통과, 다른 사람이 보내면 차단", True)
+check("가짜 '게임 종료/역할 통보'를 방장이 아닌 사람이 보내면 차단",
+      not _cl._proto_authorized("end", {"winner": "mafia"}, "해커")
+      and not _cl._proto_authorized("hdm", {"target": "이팀장B", "role": "citizen"}, "해커"))
+check("방장(호스트)에게는 방장 전용 이벤트가 오면 누가 보냈든 차단",
+      not _GateStub(me="김재무A", host="김재무A", is_host=True)._proto_authorized("end", {}, "해커"))
+check("방장을 아직 모르는 참가자는 방장 전용 이벤트(모집 시작 제외)를 받지 않음",
+      not _GateStub(host=None)._proto_authorized("start", {}, "김재무A"))
+
+for _t, _f in (("vote_cast", "voter"), ("defense_vote_cast", "voter"), ("night_action", "actor"),
+               ("user_say", "name"), ("lobby_chat", "sender"), ("mafia_to_ai", "name"),
+               ("ghost_to_ai", "name"), ("recruit_join", "name"), ("recruit_leave", "name")):
+    _host = _GateStub(me="김재무A", is_host=True)
+    if not (_host._proto_authorized(_t, {_f: "이팀장B"}, "이팀장B")
+            and not _host._proto_authorized(_t, {_f: "이팀장B"}, "해커")
+            and not _host._proto_authorized(_t, {}, "이팀장B")):
+        check(f"본인 이름 이벤트 '{_t}': 본인이 보내면 통과, 남의 이름으로 보내면 차단", False)
+        break
+else:
+    check("본인 이름 이벤트 9종: 본인이 보내면 통과, 남의 이름으로 보내면 차단", True)
+
+_ga = _GateStub()
+check("마피아 비밀 대화: 방장이 중계하는 AI 발언은 통과, 남이 AI 이름을 사칭하면 차단",
+      _ga._proto_authorized("mafia_say", {"name": "미나"}, "김재무A")
+      and not _ga._proto_authorized("mafia_say", {"name": "미나"}, "해커"))
+check("마피아 비밀 대화: 사람 동료가 자기 이름으로 보내면 통과",
+      _ga._proto_authorized("mafia_say", {"name": "동료"}, "동료"))
+
+check("모집 시작: 본인을 방장으로 알리는 사람만 통과(남을 방장으로 지목하면 차단)",
+      _GateStub(host=None, active=False)._proto_authorized("recruit_start", {"host": "김재무A"}, "김재무A")
+      and not _GateStub(host=None, active=False)._proto_authorized("recruit_start", {"host": "해커"}, "김재무A"))
+check("진행 중인 판의 방장은 다른 사람이 모집 시작으로 바꿀 수 없음",
+      not _GateStub(host="김재무A", active=True)._proto_authorized("recruit_start", {"host": "해커"}, "해커")
+      and _GateStub(host="김재무A", active=True)._proto_authorized("recruit_start", {"host": "김재무A"}, "김재무A"))
+
+_al = _GateStub()
+_al.peers["김재무A"] = ("10.0.0.1", 50707)
+check("별칭 때문에 표시 이름이 달라도 같은 접속 상대(peer)면 방장으로 인정",
+      _al._proto_authorized("end", {}, "재무팀장(별칭)", ("10.0.0.1", 50707))
+      and not _al._proto_authorized("end", {}, "재무팀장(별칭)", ("10.0.0.9", 50707)))
+
+# 게이트가 실제 수신 경로에서 폐기하는지(투표 이벤트로 확인)
+# ============================================================
+# ③ 투표 대상은 패킷에 실리지 않는다(익명)
+# ============================================================
+
+
+class _VoteStub(_GateStub):
+    def __init__(self):
+        super().__init__()
+        self.core = GameCore("t")
+        for _n in ("김재무A", "이팀장B", "미나"):
+            self.core.join(_n, _n == "미나")
+        self.core.phase = Phase.DAY
+        self.sent = []
+
+    def _refresh_vote_progress_label(self):
+        pass
+
+    def _mafia_broadcast(self, ev_type, **kw):
+        self.sent.append((ev_type, kw))
+
+
+_vs = _VoteStub()
+_vs._broadcast_vote_done("미나", "이팀장B")
+_vs._broadcast_vote_done("미나", None)
+check("호스트가 뿌리는 vote 이벤트에 투표 대상(target)이 없음",
+      all("target" not in kw for _t, kw in _vs.sent) and _vs.sent[0][1] == {"voter": "미나", "abstain": False})
+check("기권은 abstain=True로만 알림", _vs.sent[1][1] == {"voter": "미나", "abstain": True})
+
+_vs = _VoteStub()
+_vs._on_mafia_proto_msg(encode("vote", voter="미나", abstain=False), "김재무A")
+check("클라이언트는 '누가 냈는지'만 표시(대상 없이)", _vs.core.votes.get("미나") == "")
+_vs._on_mafia_proto_msg(encode("vote", voter="김재무A", abstain=True), "김재무A")
+check("기권은 기권으로 처리", "김재무A" in _vs.core.abstains)
+_vs = _VoteStub()
+_vs._on_mafia_proto_msg(encode("vote", voter="미나", target="이팀장B"), "김재무A")
+check("옛 호스트가 target을 실어 보내도 그 값은 저장하지 않음(누가 냈는지만)", _vs.core.votes.get("미나") == "")
+_vs = _VoteStub()
+_vs._on_mafia_proto_msg(encode("vote", voter="미나", target=None), "김재무A")
+check("옛 호스트의 기권(target=None)도 기권으로 인식", "미나" in _vs.core.abstains)
+_vs = _VoteStub()
+_vs.core.votes["이팀장B"] = "미나"
+_vs._on_mafia_proto_msg(encode("vote", voter="이팀장B", abstain=False), "김재무A")
+check("호스트가 되돌려 보낸 내 투표 알림이 내가 기록한 실제 표를 덮어쓰지 않음", _vs.core.votes["이팀장B"] == "미나")
+_vs = _VoteStub()
+_vs._on_mafia_proto_msg(encode("vote", voter="미나", abstain=False), "해커")
+check("방장이 아닌 사람이 보낸 vote 이벤트는 수신 경로에서 폐기", "미나" not in _vs.core.votes)
+
+# ============================================================
+# ④ 밤 AI 행동은 LLM이 판단한다(경찰·의사·마피아)
+# ============================================================
+
+
+class _FakeRoot:
+    def __init__(self):
+        self.scheduled = []
+
+    def after(self, ms, fn=None, *a):
+        self.scheduled.append((ms, fn))
+        return len(self.scheduled)
+
+
+class _FakePl:
+    def __init__(self, name, role, replies=()):
+        self.name, self.role, self.alive, self.booted = name, role, True, True
+        self.memory, self.prompts, self.replies = [], [], list(replies)
+
+    def say(self, prompt):
+        self.prompts.append(prompt)
+        return self.replies.pop(0) if self.replies else None
+
+
+class _NightStub(MafiaUIMixin):
+    def __init__(self, replies=None, day_no=2):
+        self.root = _FakeRoot()
+        self.mafia_active = True
+        self.core = GameCore("t")
+        spec = [("사람", "citizen", False), ("마피아M", "mafia", True), ("경찰P", "police", True),
+                ("의사D", "doctor", True), ("영희", "citizen", True), ("철수", "citizen", True)]
+        for n, r, ai in spec:
+            self.core.join(n, ai)
+            self.core.players[n]["role"] = r
+        self.core.phase, self.core.day_no = Phase.NIGHT, day_no
+        replies = replies or {}
+        self.pls = {n: _FakePl(n, r, replies.get(n, ())) for n, r, ai in spec if ai}
+        self.ai = SimpleNamespace(players=list(self.pls.values()))
+        self.sys = []
+
+    def add_mafia_system(self, t):
+        self.sys.append(t)
+
+    def _night_ai_pick_async(self, pl, prompt, cands, cb):        # 스레드 없이 동기 실행
+        cb(self._night_ai_parse(pl.say(prompt), cands))
+
+
+import random as _rnd
+
+# --- 경찰 ---
+_s = _NightStub({"경찰P": ["선택 영희"]})
+_s._night_ai_police(_s.pls["경찰P"], 2)
+check("AI 경찰: LLM이 고른 사람을 실제로 조사(영희 = 마피아 아님)", _s.core.police_invest == {"영희": "citizen"})
+check("AI 경찰 프롬프트에 후보와 자기 자신 제외가 반영됨",
+      "영희" in _s.pls["경찰P"].prompts[0] and "경찰P" not in _s.pls["경찰P"].prompts[0].split("후보:")[1].split(".")[0])
+for _ms, _fn in _s.root.scheduled:
+    _fn()
+check("AI 경찰: 늦은 대체(무작위) 타이머가 와도 조사는 한 번만", len(_s.core.police_invest) == 1)
+
+for _bad, _why in (("모르겠어요", "후보에 없는 답"), (None, "LLM 실패"), ("선택 경찰P", "자기 자신 지목")):
+    _s = _NightStub({"경찰P": [_bad, _bad, _bad]})
+    _s._night_ai_police(_s.pls["경찰P"], 2)
+    _tgt = list(_s.core.police_invest)
+    check(f"AI 경찰: {_why}이면 무작위 후보로 대체해 정확히 1명 조사(자기 자신 제외)",
+          len(_tgt) == 1 and _tgt[0] != "경찰P")
+
+_s = _NightStub({"경찰P": ["선택 영희"]})
+_s.core.police_invest["철수"] = "citizen"
+_s._night_ai_police(_s.pls["경찰P"], 2)
+check("AI 경찰: 이미 조사한 사람은 후보에서 제외", "철수" not in _s.pls["경찰P"].prompts[0].split("후보:")[1].split(".")[0])
+
+_s = _NightStub({"경찰P": ["선택 영희"]})
+_s.core.phase = Phase.DAY
+_s._night_ai_police(_s.pls["경찰P"], 2)
+check("밤이 끝난 뒤(낮) 도착한 LLM 결과는 적용하지 않음", _s.core.police_invest == {})
+_s = _NightStub({"경찰P": ["선택 영희"]}, day_no=3)
+_s._night_ai_police(_s.pls["경찰P"], 2)
+check("다른 밤(day_no 불일치)의 LLM 결과는 적용하지 않음", _s.core.police_invest == {})
+
+# --- 의사 ---
+_s = _NightStub({"의사D": ["선택 철수"]})
+_s._night_ai_doctor(_s.pls["의사D"], 2)
+check("AI 의사: LLM이 고른 사람을 실제로 보호", _s.core.night_saved == "철수")
+_s = _NightStub({"의사D": ["선택 의사D"]})
+_s._night_ai_doctor(_s.pls["의사D"], 2)
+check("AI 의사: 자기 자신도 보호할 수 있음", _s.core.night_saved == "의사D")
+_s = _NightStub({"의사D": ["선택 영희"] * 3})
+_s.core.last_protect = "영희"
+_s._night_ai_doctor(_s.pls["의사D"], 2)
+check("AI 의사: 어젯밤 보호한 사람(연속 금지)은 후보에서 빠지고 LLM이 골라도 보호하지 않음",
+      _s.core.night_saved not in (None, "영희") and "영희" not in _s.pls["의사D"].prompts[0].split("후보:")[1].split(".")[0])
+_s = _NightStub({"의사D": [None, None, None]})
+_s._night_ai_doctor(_s.pls["의사D"], 2)
+check("AI 의사: LLM 실패 시 무작위 후보를 보호(밤 행동이 비지 않음)", _s.core.night_saved is not None)
+
+# --- 마피아 ---
+_s = _NightStub({"마피아M": ["선택 철수"]})
+_s._night_ai_mafia(2)
+check("AI 마피아: LLM이 고른 사람을 AI 마피아의 살해 지목으로 기록(후보는 시민 쪽만)",
+      _s.core.night_targets.get("마피아M") == "철수"
+      and "마피아M" not in _s.pls["마피아M"].prompts[0].split("후보(시민 쪽 생존자):")[1].split(".")[0])
+_s = _NightStub({"마피아M": ["선택 철수"]})
+_s._mafia_kill_plan = {"target": "영희", "by": "human", "confirmed": True}
+_s._night_ai_mafia(2)
+check("비밀방에서 사람이 목표를 정했으면 AI가 LLM으로 다시 고르지 않음(호출도 안 함)",
+      _s.pls["마피아M"].prompts == [] and _s.core.night_targets == {})
+_s = _NightStub({"마피아M": ["선택 철수"]})
+_s.core.players["사람"]["role"] = "mafia"
+_s.core.night_targets["사람"] = "영희"
+_s._night_ai_mafia(2)
+check("사람 마피아가 밤 패널에서 이미 골랐으면 AI가 LLM으로 다시 고르지 않음",
+      _s.pls["마피아M"].prompts == [] and "마피아M" not in _s.core.night_targets)
+_s = _NightStub({"마피아M": ["선택 철수"]})
+_s.core.phase = Phase.DAY
+_s._night_ai_mafia(2)
+check("낮이 되면 마피아 LLM 결과를 적용하지 않음", _s.core.night_targets == {})
+
+check("LLM 답 파싱: '선택 이름' / 문장 속 이름 / 후보에 없는 이름",
+      MafiaUIMixin._night_ai_parse("선택 영희", ["영희", "철수"]) == "영희"
+      and MafiaUIMixin._night_ai_parse("음… 철수가 제일 수상해요", ["영희", "철수"]) == "철수"
+      and MafiaUIMixin._night_ai_parse("아무도 모르겠어", ["영희", "철수"]) is None
+      and MafiaUIMixin._night_ai_parse("", ["영희"]) is None)
+
 print("REPORT FIXES PASSED" if ok_all else "REPORT FIXES FAILED")
 sys.exit(0 if ok_all else 1)

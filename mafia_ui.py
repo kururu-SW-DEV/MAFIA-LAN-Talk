@@ -1101,8 +1101,63 @@ class MafiaUIMixin:
             return
         self._mafia_send_private(host, ev_type, **kw)
 
-    def _on_mafia_proto_msg(self, text, sender_name):
-        """클라이언트 쪽 — [MAFIA1] 메시지 수신시. 호스트 권한 only."""
+    # 방장(호스트)만 보낼 수 있는 이벤트 — 다른 사람이 보내면 폐기한다.
+    _HOST_ONLY_EVENTS = frozenset({
+        "hsay", "asay", "sys", "hdm", "start", "night", "day", "death", "end", "tally",
+        "vote", "vote_open", "revote_open", "defense_vote_open", "defense_start", "verdict",
+        "recruit_start", "recruit_update", "recruit_cancel", "ghost_say"})
+    # 참가자가 자기 이름으로 보내는 이벤트 → 본문에 적힌 '누구'가 실제 송신자와 같아야 한다.
+    _PEER_CLAIM_FIELD = {
+        "user_say": "name", "lobby_chat": "sender", "mafia_say": "name",
+        "vote_cast": "voter", "defense_vote_cast": "voter", "night_action": "actor",
+        "mafia_to_ai": "name", "ghost_to_ai": "name",
+        "recruit_join": "name", "recruit_leave": "name"}
+
+    def _sender_is(self, claimed, sender_name, peer=None):
+        """본문이 주장하는 이름(claimed)이 실제 송신자인지. 표시 이름이 같거나, 그 이름의
+        접속 상대(peer)가 이 패킷을 보낸 상대와 같으면(별칭을 붙여 이름이 달라진 경우) 인정."""
+        if not claimed:
+            return False
+        if claimed == sender_name:
+            return True
+        if peer is not None:
+            try:
+                key = self._mafia_peer_of(claimed)
+                return key is not None and tuple(key) == tuple(peer)
+            except Exception:
+                return False
+        return False
+
+    def _proto_authorized(self, t, ev, sender_name, peer=None):
+        """[MAFIA1] 이벤트의 송신자 검증. 같은 LAN의 누구든 가짜 '게임 종료/역할 통보' 같은
+        방장 전용 패킷이나 남의 이름으로 된 투표·밤 행동을 보낼 수 있던 문제를 막는다."""
+        me = getattr(self.engine, "name", None)
+        host = getattr(self, "_recruiter_host", None)
+        am_host = bool(self._mafia_is_host() or (host and host == me))
+        if t in self._HOST_ONLY_EVENTS:
+            if am_host:
+                return False            # 방장에게 방장 전용 이벤트가 올 이유가 없다
+            if t == "recruit_start":
+                # 모집을 여는 사람은 본인을 방장으로 알려야 하고, 진행 중인 판의 방장은 바꿀 수 없다
+                if not self._sender_is(ev.get("host"), sender_name, peer):
+                    return False
+                if getattr(self, "mafia_active", False) and host                         and not self._sender_is(host, sender_name, peer):
+                    return False
+                return True
+            return bool(host) and self._sender_is(host, sender_name, peer)
+        field = self._PEER_CLAIM_FIELD.get(t)
+        if field:
+            if t == "mafia_say" and host and self._sender_is(host, sender_name, peer):
+                return True             # 방장이 중계하는 AI 마피아 발언·목표 안내
+            return self._sender_is(ev.get(field), sender_name, peer)
+        return True
+
+    def _broadcast_vote_done(self, voter, target):
+        """투표가 '접수됐다'만 알린다(대상은 싣지 않는다) — 화면뿐 아니라 패킷·로그로도 익명."""
+        self._mafia_broadcast("vote", voter=voter, abstain=(target is None))
+
+    def _on_mafia_proto_msg(self, text, sender_name, peer=None):
+        """[MAFIA1] 메시지 수신시. 송신자 검증을 통과한 것만 처리한다."""
         try:
             from mafia_net import decode
             ev = decode(text)
@@ -1111,6 +1166,13 @@ class MafiaUIMixin:
         except Exception:
             return False
         t = ev.get("t")
+        if not self._proto_authorized(t, ev, sender_name, peer):
+            try:
+                import applog
+                applog.log("mafia_proto_rejected", detail=f"t={t} from={sender_name}")
+            except Exception:
+                pass
+            return False
         if t == "hsay":
             self.add_mafia_bubble(ev.get("text", ""), ev.get("host", "🖥 사회자"))
         elif t == "asay":
@@ -1313,12 +1375,13 @@ class MafiaUIMixin:
             # 표시가 항상 정확하도록). target이 없으면 기권.
             v = ev.get("voter")
             if v and v in self.core.players:
-                if "target" in ev and ev.get("target"):
-                    tg = ev.get("target")
-                    if tg in self.core.players:
-                        self.core.cast_vote(v, tg)
-                else:
+                # 새 호스트는 대상을 싣지 않는다(익명). 옛 호스트가 보낸 target은 무시한다.
+                # 예전 호스트의 기권은 target=None으로 온다 — 그것만 기권으로 본다.
+                if ev.get("abstain") or ("target" in ev and not ev.get("target")):
                     self.core.cast_abstain(v)
+                else:
+                    # 누가 '냈는지'만 표시(진행률용). 이미 내 표가 기록돼 있으면 덮어쓰지 않는다.
+                    self.core.votes.setdefault(v, "")
                 self._refresh_vote_progress_label()
         elif t == "vote_cast":
             # 클라이언트 → 호스트: 원격 참가자의 실제 낮 투표 선택.
@@ -1647,7 +1710,7 @@ class MafiaUIMixin:
                     self.add_mafia_system(f"🗳 {me}님 투표 접수 완료 (익명 개표) · 진행률 {_pd}/{_pt}")
                     self._refresh_vote_progress_label()
                     if self._mafia_is_host():
-                        self._mafia_broadcast("vote", voter=me, target=target)
+                        self._broadcast_vote_done(me, target)
                     else:
                         self._mafia_send_to_host("vote_cast", voter=me, target=target)
                     # v1.18 — 투표 팝업이 열려 있으면 즉시 닫기 + 잔여 버튼 잠금
@@ -1730,17 +1793,21 @@ class MafiaUIMixin:
             self.root.after(1900, lambda f=factory2: self.ai.say_async(f))
 
     # ==================== 밤 AI 행동 ====================
+    # 밤 AI 행동 타이밍(밀리초)
+    NIGHT_LLM_FALLBACK_MS = 11000     # 경찰·의사: 이 안에 LLM 답이 없으면 무작위로 대신한다
+    NIGHT_MAFIA_LLM_MS = 10000        # 마피아: 비밀 대화가 오간 뒤 LLM이 살해 대상을 다시 판단한다
+
     def _trigger_night_actions(self):
-        """마피아 AI에게 '살해 대상' 추천을, 의사 AI에게 '구조 대상' 추천을 받아
-        core.night_target / night_saved에 반영."""
+        """밤 AI 행동을 시작한다.
+        - 마피아: 즉시 무작위 기본 지목을 깔아 두고(LLM이 늦어도 밤이 진행되게), 비밀 대화가
+          오간 뒤(NIGHT_MAFIA_LLM_MS) LLM이 후보 중 살해 대상을 다시 고른다.
+        - 경찰·의사: 시작 즉시 LLM에게 묻고, NIGHT_LLM_FALLBACK_MS 안에 답이 없으면 무작위.
+        예전엔 세 역할 모두 random.choice였다(추리 게임의 밤이 전부 난수)."""
+        import random as _rr
         mafia_ais = [pl for pl in self.ai.players
                      if pl.alive and pl.role == "mafia" and pl.booted]
-        doctor_ais = [pl for pl in self.ai.players
-                      if pl.alive and pl.role == "doctor" and pl.booted]
         alive = self.core.alive_players()
         results = {"multi": [], "multi_pairs": []}
-
-        import random as _rr
         all_mafias = set(self.core.mafias())
         for pl in mafia_ais:
             # 인간 마피아까지 포함해 동료 살해 제외 + 자투 금지
@@ -1750,24 +1817,154 @@ class MafiaUIMixin:
                 results.setdefault("kill", t)
                 results["multi"].append(t)
                 results["multi_pairs"].append((pl.name, t))
-        police_ais = [pl for pl in self.ai.players
-                      if pl.alive and pl.role == "police" and pl.booted]
-        for pl in police_ais:
-            already = [t for t in self.core.police_invest]  # 중복 조사 방지
-            cand = [n for n in alive if n != pl.name and n not in already]
-            if cand:
-                results["invest"] = _rr.choice(cand)
-        last_saved = getattr(self.core, "last_protect", None)
-        for pl in doctor_ais:
-            # 의사 구조 후보: 자기 자신 포함(사람 의사와 동일 규칙) + 마피아 제외 + 어젯밤 연속 보호 제외
-            cand = [n for n in alive if n not in all_mafias and n != last_saved]
-            if not cand:
-                cand = [n for n in alive if n not in all_mafias]
-            if results.get("kill") in cand and _rr.random() < 0.30 and len(cand) > 1:
-                cand.remove(results["kill"])
-            if cand:
-                results["save"] = _rr.choice(cand)
         self.root.after(0, lambda: self._apply_night_actions(results))
+
+        night_no = self.core.day_no
+        self._ensure_night_ai_poll()
+        for pl in self.ai.players:
+            if pl.alive and pl.booted and pl.role == "police":
+                self._night_ai_police(pl, night_no)
+            elif pl.alive and pl.booted and pl.role == "doctor":
+                self._night_ai_doctor(pl, night_no)
+        if mafia_ais:
+            self.root.after(self.NIGHT_MAFIA_LLM_MS, lambda: self._night_ai_mafia(night_no))
+
+    # ---------- 밤 AI: LLM 판단 공통 ----------
+    def _night_ai_active(self, night_no):
+        """이 밤이 아직 진행 중인가(늦게 도착한 LLM 답이 다음 낮/밤에 섞이지 않게)."""
+        return bool(self.mafia_active and getattr(self, "core", None)
+                    and self.core.phase == Phase.NIGHT and self.core.day_no == night_no)
+
+    @staticmethod
+    def _night_ai_parse(reply, cands):
+        """LLM 답에서 후보 이름 하나를 뽑는다(없으면 None)."""
+        reply = (reply or "").strip()
+        if not reply or not cands:
+            return None
+        pos, _neg = MafiaUIMixin._named_split(reply, cands)
+        if pos:
+            return pos
+        hits = sorted((reply.find(n), n) for n in cands if n in reply)
+        return hits[0][1] if hits else None
+
+    def _ensure_night_ai_poll(self):
+        """밤 AI 결과 큐 폴러(메인스레드) — 밤이 끝나면 스스로 멈춘다."""
+        import queue as _q
+        if getattr(self, "_night_ai_q", None) is None:
+            self._night_ai_q = _q.Queue()
+        if not getattr(self, "_night_ai_poll_on", False):
+            self._night_ai_poll_on = True
+            self._poll_night_ai_queue()
+
+    def _poll_night_ai_queue(self):
+        import queue as _q
+        try:
+            while True:
+                fn = self._night_ai_q.get_nowait()
+                try:
+                    fn()
+                except Exception as e:
+                    import applog
+                    applog.log("night_ai_apply", exc=e)
+        except _q.Empty:
+            pass
+        if self.mafia_active and self.core.phase == Phase.NIGHT:
+            self.root.after(250, self._poll_night_ai_queue)
+        else:
+            self._night_ai_poll_on = False
+
+    def _night_ai_pick_async(self, pl, prompt, cands, cb):
+        """워커 스레드에서 LLM에게 후보 중 하나를 고르게 하고, 결과(cb(pick), 실패 시 None)는
+        큐를 거쳐 메인스레드에서 실행한다(워커에서 Tk를 직접 만지지 않는다)."""
+        def worker():
+            pick = None
+            try:
+                reply = None
+                for _ in range(3):                   # 다른 발화 중(busy)이면 잠깐 뒤 재시도
+                    reply = pl.say(prompt)
+                    if reply:
+                        break
+                    time.sleep(1.2)
+                pick = self._night_ai_parse(split_chat_tags(clean_llm_dialect(reply or "")), cands)
+            except Exception as e:
+                import applog
+                applog.log("night_ai_llm", exc=e)
+            self._night_ai_q.put(lambda: cb(pick))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _night_ai_decide(self, pl, night_no, prompt, cands, apply_fn, fallback_ms=None):
+        """후보 중 하나를 LLM이 고르게 하고 apply_fn(target)을 '정확히 한 번' 실행한다.
+        LLM 답이 없거나 후보에 없으면 무작위, fallback_ms가 지나도 답이 없으면 그때 무작위."""
+        import random as _rr
+        if not cands:
+            return
+        state = {"done": False}
+
+        def finish(target):
+            if state["done"] or not self._night_ai_active(night_no):
+                return
+            state["done"] = True
+            apply_fn(target if target in cands else _rr.choice(cands))
+
+        self._night_ai_pick_async(pl, prompt, cands, finish)
+        if fallback_ms:
+            self.root.after(fallback_ms, lambda: finish(None))
+
+    # ---------- 밤 AI: 역할별 ----------
+    def _night_ai_police(self, pl, night_no):
+        core = self.core
+        cands = [n for n in core.alive_players()
+                 if n != pl.name and n not in core.police_invest]     # 이미 조사한 사람은 제외
+        known = ", ".join(f"{t}={'마피아' if r == 'mafia' else '마피아 아님'}"
+                          for t, r in core.police_invest.items()) or "없음"
+        prompt = (f"[밤 행동 — 경찰] 오늘 밤 조사할 사람을 한 명 고르세요. 후보: {', '.join(cands)}. "
+                  f"지금까지 조사 결과: {known}. 낮 토론에서 수상했던 사람이나 아직 정체를 모르는 "
+                  f"사람을 근거로 판단하세요. 답은 오직 '선택 이름' 한 줄.")
+        self._night_ai_decide(pl, night_no, prompt, cands,
+                              lambda t: self._apply_night_actions({"invest": t}),
+                              self.NIGHT_LLM_FALLBACK_MS)
+
+    def _night_ai_doctor(self, pl, night_no):
+        core = self.core
+        alive = core.alive_players()
+        last = getattr(core, "last_protect", None)
+        cands = [n for n in alive if n != last] or alive       # 자기 자신 포함, 어젯밤 대상 제외
+        prompt = (f"[밤 행동 — 의사] 오늘 밤 마피아에게 노려질 것 같은 사람을 한 명 보호하세요"
+                  f"(자신도 가능). 후보: {', '.join(cands)}. 어젯밤 보호한 사람은 연속 보호할 수 "
+                  f"없어 후보에서 뺐습니다. 마피아가 제거하고 싶어 할 만한 사람(추리를 잘하거나 "
+                  f"의심을 많이 받는 사람)을 근거로 고르세요. 답은 오직 '선택 이름' 한 줄.")
+        self._night_ai_decide(pl, night_no, prompt, cands,
+                              lambda t: self._apply_night_actions({"save": t}),
+                              self.NIGHT_LLM_FALLBACK_MS)
+
+    def _night_ai_mafia(self, night_no):
+        """AI 마피아 팀의 살해 대상을 LLM이 다시 고른다. 사람이 이미 정했으면(대화 목표나
+        밤 패널 선택) 그 결정이 우선이므로 건드리지 않는다."""
+        if not self._night_ai_active(night_no):
+            return
+        core = self.core
+        if getattr(self, "_mafia_kill_plan", None):
+            return                                               # 비밀방에서 목표가 나옴
+        if any(not (core.players.get(m) or {}).get("is_ai") and m in core.night_targets
+               for m in core.mafias()):
+            return                                               # 사람 마피아가 패널에서 고름
+        ais = [pl for pl in self.ai.players
+               if pl.alive and pl.role == "mafia" and pl.booted]
+        cands = self._mafia_kill_candidates()
+        if not ais or not cands:
+            return
+        talk = chr(10).join(list(getattr(self, "_mafia_secret_log", []) or [])[-8:]) or "없음"
+        prompt = (f"[밤 행동 — 마피아] 오늘 밤 살해할 사람을 한 명 고르세요. 후보(시민 쪽 생존자): "
+                  f"{', '.join(cands)}. 마피아 비밀 대화: {talk}. 낮 토론에서 마피아 쪽을 의심하거나 "
+                  f"추리가 날카로웠던 사람, 경찰·의사로 짐작되는 사람을 우선 고려하세요. "
+                  f"답은 오직 '선택 이름' 한 줄.")
+
+        def apply(target):
+            for pl in ais:
+                if (core.players.get(pl.name) or {}).get("alive"):
+                    core.mafia_night_vote(pl.name, target)       # 이후 합의 단계에서 AI 지목으로 쓰인다
+
+        self._night_ai_decide(ais[0], night_no, prompt, cands, apply)
 
     def _apply_night_actions(self, results):
         if not self.mafia_active:
@@ -2861,7 +3058,7 @@ class MafiaUIMixin:
         else:
             self.add_mafia_system(f"🗳 {voter} 기권 접수 · 진행률 {_pd}/{_pt}")
         self._refresh_vote_progress_label()
-        self._mafia_broadcast("vote", voter=voter, target=target)
+        self._broadcast_vote_done(voter, target)
         if revote:
             self._check_revote_done()
         elif self.core.all_voted():
@@ -2892,7 +3089,7 @@ class MafiaUIMixin:
                 # v1.61 — 복수 인간 플레이: 내가 호스트면 다른 참가자들에게
                 # 즉시 재동기화, 클라이언트면 호스트에게 실제 반영을 요청.
                 if self._mafia_is_host():
-                    self._mafia_broadcast("vote", voter=me, target=None)
+                    self._broadcast_vote_done(me, None)
                 else:
                     self._mafia_send_to_host("vote_cast", voter=me, target=None)
         else:
@@ -2915,7 +3112,7 @@ class MafiaUIMixin:
                 self._refresh_vote_progress_label()
                 # v1.61 — 복수 인간 플레이 동기화(위 기권 분기와 동일한 이유)
                 if self._mafia_is_host():
-                    self._mafia_broadcast("vote", voter=me, target=name)
+                    self._broadcast_vote_done(me, name)
                 else:
                     self._mafia_send_to_host("vote_cast", voter=me, target=name)
                 # v1.18 — 클릭 즉시 시각 피드백(눌린 버튼 보라색 + '✓ 접수' 라벨),
@@ -3165,7 +3362,7 @@ class MafiaUIMixin:
             _pd, _pt = self._vote_progress_counts()
             self.add_mafia_system(f"🗳 {me}님 재투표 접수 완료 (익명 개표) · 진행률 {_pd}/{_pt}")
             if self._mafia_is_host():
-                self._mafia_broadcast("vote", voter=me, target=name)
+                self._broadcast_vote_done(me, name)
             else:
                 self._mafia_send_to_host("vote_cast", voter=me, target=name)
         self._mafia_overlay_close()

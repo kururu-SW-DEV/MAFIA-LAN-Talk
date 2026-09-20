@@ -2372,7 +2372,7 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
         # 마피아 게임 프로토콜 메시지는 일반 채팅에 표출하지 않고 게임방으로 전달
         txt0 = ev.get("text") or ""
         if txt0.startswith("[MAFIA1]"):
-            self._on_mafia_proto_msg(txt0, name)
+            self._on_mafia_proto_msg(txt0, name, ev.get("peer"))
             try:
                 self.engine.send_read_ack(ev["peer"][0], ev["peer"][1], mid=ev.get("mid", ""))
             except Exception:
