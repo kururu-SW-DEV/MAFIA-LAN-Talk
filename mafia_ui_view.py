@@ -20,9 +20,32 @@ class MafiaViewMixin:
             base = None
         if label.startswith("🖥") or "사회자" in label:
             return M_HOST
+        distinct = self._ai_distinct_color(label)
+        if distinct:
+            return distinct
         if label in M_AI_COLORS:
             return M_AI_COLORS[label]
         return base or "#94a3b8"
+
+    # 색상환에서 멀리 떨어진 10색(사회자 보라와 겹치는 보라는 맨 끝) — AI끼리 프로필 색이 겹치거나 비슷해 헷갈리지 않게 한 판 안에서 하나씩 배정
+    AI_DISTINCT_COLORS = ("#ef4444", "#f97316", "#eab308", "#84cc16", "#14b8a6",
+                          "#3b82f6", "#ec4899", "#a16207", "#94a3b8", "#8b5cf6")
+
+    def _ai_distinct_color(self, label):
+        """게임 중 AI 참가자에게 서로 다른 색을 준다. 이름 정렬 순서로 배정하므로 모든 참가자 화면에서
+        같은 색이 되고(명단은 전원이 같다), 게임 밖이거나 AI가 아니면 None."""
+        core = getattr(self, "core", None)
+        if not core or not getattr(self, "mafia_active", False):
+            return None
+        try:
+            with core.lock:
+                if not (core.players.get(label) or {}).get("is_ai"):
+                    return None
+                ais = sorted(n for n, p in core.players.items() if p.get("is_ai"))
+            return self.AI_DISTINCT_COLORS[ais.index(label) % len(self.AI_DISTINCT_COLORS)]
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+            return None
 
     def _super_avacolor(self, name):
         # 앱의 원래 _avacolor와 동일한 CRC 로직(C_AVA 팔레트)을 따라간다

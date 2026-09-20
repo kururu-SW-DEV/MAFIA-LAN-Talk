@@ -76,6 +76,9 @@ try:
     check("내 이름에 (나), AI에 🤖 표시", "테스터 (나)" in t and "🤖" in t)
     check("사망자가 없으면 사망 항목이 없음", "사망" not in t)
 
+    cols = [app._avacolor(n) for n in ("철수", "영희", "민수")]
+    check("AI 3명의 프로필 색이 서로 다름", len(set(cols)) == 3)
+    check("사람 참가자는 AI 배정색을 쓰지 않음(기존 색 유지)", app._ai_distinct_color("테스터") is None)
     core.players["영희"]["alive"] = False
     for _ in range(100):           # 2초 주기 갱신을 기다린다
         root.update()
