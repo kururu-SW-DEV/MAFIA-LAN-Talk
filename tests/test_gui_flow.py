@@ -227,6 +227,11 @@ finally:
         app.engine.stop()
     B.stop()
     C.stop()
+    try:
+        if getattr(app, "_notifier", None) is not None:
+            app._notifier.close()      # 트레이 아이콘 제거 — 안 하면 종료 후에도 죽은 아이콘이 남는다
+    except Exception:
+        pass
     root.destroy()
     shutil.rmtree(tmp, ignore_errors=True)
 

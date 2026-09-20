@@ -69,6 +69,14 @@ def _role_kr(role):
     return ROLE_LABEL_KR.get(role, role) if role else "미확인"
 
 
+def _role_was(role):
+    """직업 공개 멘트 — 받침 유무에 맞춰 '마피아였습니다' / '시민이었습니다'."""
+    label = _role_kr(role)
+    last = label[-1]
+    has_batchim = "가" <= last <= "힣" and (ord(last) - 0xAC00) % 28 != 0
+    return f"{label}{'이었' if has_batchim else '였'}습니다"
+
+
 class MafiaUIMixin:
 
     # ==================== 사회자/AI 아바타 색 ====================
@@ -674,12 +682,26 @@ class MafiaUIMixin:
         info = self.core.players.get(me) or {}
         role = info.get("role") or getattr(self, "_my_mafia_role", None)
         return (self.mafia_active and self.core.phase == Phase.NIGHT and role == "mafia"
-                and info.get("alive", True) and bool(self._mafia_team_names(me)))
+                and info.get("alive", True)
+                and bool(self._mafia_team_names(me) or self._mafia_ai_mates(me)))
 
     def _maybe_open_mafia_room(self):
         if self._mafia_room_wanted():
             self._mafia_room_history = []
             self._mafia_room_open()
+
+    def _mafia_room_place(self, w, **size):
+        """비밀방/밀담 버튼 배치 — 메인 채팅창의 전송 버튼 바로 위(우측 정렬)에 붙여서
+        기존 입력창·전송 버튼을 가리지 않게 한다. 전송 버튼이 아직 화면에 없으면
+        예전처럼 창 우하단 기준으로 둔다."""
+        anchor_w = getattr(self, "send_btn", None)
+        try:
+            if anchor_w is not None and anchor_w.winfo_ismapped():
+                w.place(in_=anchor_w, relx=1.0, rely=0.0, x=0, y=-12, anchor="se", **size)
+                return
+        except Exception:
+            pass
+        w.place(relx=1.0, rely=1.0, x=-16, y=-16, anchor="se", **size)
 
     def _mafia_room_open(self):
         f = getattr(self, "_mafia_room", None)
@@ -697,7 +719,7 @@ class MafiaUIMixin:
         except Exception:
             pass
         f = tk.Frame(self.root, bg=C_CARD, highlightthickness=1, highlightbackground="#b91c1c")
-        f.place(relx=1.0, rely=1.0, x=-16, y=-16, anchor="se", width=310, height=270)
+        self._mafia_room_place(f, width=310, height=270)
         head = tk.Frame(f, bg=C_CARD)
         head.pack(fill="x", padx=10, pady=(8, 4))
         lbl = tk.Label(head, text="🔪 마피아 비밀방 — 마피아끼리만", bg=C_CARD, fg="#fca5a5",
@@ -754,7 +776,7 @@ class MafiaUIMixin:
             b = tk.Button(self.root, text="🔪 마피아 밀담", command=self._mafia_room_open,
                           bg="#b91c1c", fg="white", relief="flat", bd=0,
                           highlightthickness=0, cursor="hand2", font=M_FONT_HELP)
-            b.place(relx=1.0, rely=1.0, x=-16, y=-16, anchor="se")
+            self._mafia_room_place(b)
             emoji_render.apply(b, M_FONT_HELP)
             self._mafia_room_mini = b
 
@@ -786,6 +808,256 @@ class MafiaUIMixin:
         self._mafia_room_append("나", text)
         for mate in self._mafia_team_names(me):
             self._mafia_send_private(mate, "mafia_say", name=me, text=text)
+        # AI 마피아 동료도 이 말을 듣고 답한다(AI는 호스트에서만 돌아간다)
+        if self._mafia_ai_mates(me):
+            if self._mafia_is_host():
+                self._mafia_ai_respond(me, text)
+            else:
+                self._mafia_send_to_host("mafia_to_ai", name=me, text=text)
+
+    def _mafia_ai_mates(self, me):
+        """내가 마피아일 때 살아있는 AI 마피아 동료(나 제외)."""
+        names = [n for n in self.core.mafias() if n != me]
+        for n in getattr(self, "_my_mafia_mates", None) or []:
+            if n not in names and n != me:
+                names.append(n)
+        return [n for n in names
+                if (self.core.players.get(n) or {}).get("is_ai", False)
+                and (self.core.players.get(n) or {}).get("alive", True)]
+
+    # ---------- 마피아 비밀방 — AI 마피아 대화(호스트 전용) ----------
+    def _mafia_secret_recipients(self):
+        """AI 마피아의 비밀 발언을 받을 사람 마피아(생존) 이름들 — 호스트 본인 포함."""
+        return [n for n in self.core.mafias()
+                if not (self.core.players.get(n) or {}).get("is_ai", False)]
+
+    def _mafia_ai_respond(self, speaker, text):
+        """사람 마피아(speaker)의 비밀방 발언에 AI 마피아 1~2명이 답한다.
+        speaker/text가 None이면 AI가 먼저 말을 꺼낸다(밤 시작 직후)."""
+        import random as _rr
+        if (not self._mafia_is_host() or not getattr(self, "ai", None)
+                or not self.mafia_active or self.core.phase != Phase.NIGHT):
+            return
+        ais = [pl for pl in self.ai.players
+               if pl.alive and pl.role == "mafia" and getattr(pl, "booted", False)]
+        if not ais or not self._mafia_secret_recipients():
+            return
+        log = getattr(self, "_mafia_secret_log", None)
+        if log is None:
+            log = self._mafia_secret_log = []
+        if speaker and text:
+            log.append(f"{speaker}: {text}")
+            del log[:-10]
+            for pl in ais:                      # 마피아 AI끼리만 기억(공개 채팅에는 안 새게)
+                pl.observe(speaker, f"(마피아 비밀 대화) {text}")
+            self._mafia_plan_from_human(text)   # 대화에서 정한 오늘 밤 목표를 기록
+        _rr.shuffle(ais)
+        picks = ais[:2] if (speaker and len(ais) > 1 and _rr.random() < 0.4) else ais[:1]
+        self._ensure_mafia_ai_poll()
+        for order, pl in enumerate(picks):
+            threading.Thread(target=self._mafia_ai_worker,
+                             args=(pl, speaker, text, order), daemon=True).start()
+
+    # ---------- 대화로 정하는 오늘 밤 살해 목표 ----------
+    _AGREE_RE = re.compile(r"(좋아|좋다|좋지|그래|그러자|ㅇㅋ|오케|okay|ok|동의|ㄱㄱ|가자|콜|찬성|그걸로|그렇게)", re.I)
+    # 이름 뒤에 이런 표현이 붙으면 그 사람을 '노리자'가 아니라 '빼자/피하자'는 뜻으로 본다.
+    _DISAGREE_RE = re.compile(r"(싫|아니|반대|말고|안 ?(?:돼|되)|별로|글쎄|말자|피하|제외|빼고|빼자|"
+                              r"건드리지|건들지|살려|놔두|냅두|내버려|패스)")
+    # 이름 '앞'에 올 때만 부정으로 보는 강한 표현('아니','말고'는 뒤 말에 따라 뜻이 갈려 제외)
+    _PRE_NEG_RE = re.compile(r"(싫|반대|안 ?(?:돼|되)|별로|말자|피하|제외|패스)")
+    # 이름 뒤에 이런 서술이 있으면 그 사람을 '목표로 삼자'는 뜻이라 앞쪽 부정어를 무시한다
+    _AFFIRM_RE = re.compile(r"(노리|죽이|죽여|가자|하자|해보자|찍자|잡자|어때|로 ?정|콜)")
+
+    def _mafia_kill_candidates(self):
+        """오늘 밤 살해 후보 — 살아있는 마피아 아닌 참가자."""
+        return [n for n in self.core.alive_players()
+                if (self.core.players.get(n) or {}).get("role") != "mafia"]
+
+    @staticmethod
+    def _last_named(text, cands):
+        """text에서 가장 나중에 언급된 후보 이름(없으면 None)."""
+        best, pos = None, -1
+        for n in cands:
+            i = (text or "").rfind(n)
+            if i > pos:
+                best, pos = n, i
+        return best
+
+    @classmethod
+    def _named_split(cls, text, cands):
+        """text 속 후보 이름을 (긍정 대상, 부정된 이름 집합)으로 나눈다.
+        각 이름 '바로 뒤부터 다음 이름 앞까지'에 부정 표현('말자','안 돼','피하자' 등)이 있으면
+        부정된 이름 — 예) '김철수는 안 돼, 이영희로 하자' → (이영희, {김철수}).
+        긍정 대상은 부정되지 않은 이름 중 가장 나중에 언급된 것(없으면 None)."""
+        text = text or ""
+        names = sorted({n for n in cands if n}, key=len, reverse=True)
+        if not names or not text:
+            return None, set()
+        # 긴 이름부터 매칭해서 '정민우' 안의 '민우'처럼 다른 이름에 포함된 부분 문자열이 따로 잡히지 않게 한다
+        hits = [(m.start(), m.end(), m.group(0))
+                for m in re.finditer("|".join(re.escape(n) for n in names), text)]
+        positive, negated = None, set()
+        prev_end = 0
+        for i, (start, end, name) in enumerate(hits):
+            nxt = hits[i + 1][0] if i + 1 < len(hits) else len(text)
+            after = text[end:nxt]
+            neg = bool(cls._DISAGREE_RE.search(after))
+            if not neg:
+                # 이름 앞에 부정어가 오는 말투('안 돼 김철수', '별로야 김철수는 진짜') — 뒤에
+                # '노리자/하자' 같은 서술이 없으면 부정으로 본다('아니 김철수 노리자'는 긍정).
+                before = text[max(prev_end, start - 10):start]
+                neg = bool(cls._PRE_NEG_RE.search(before)) and not cls._AFFIRM_RE.search(after)
+            prev_end = end
+            if neg:
+                negated.add(name)
+            else:
+                positive = name
+        return positive, negated
+
+    def _mafia_plan_from_human(self, text):
+        """사람 마피아의 비밀방 발언에서 목표를 읽는다 — 이름을 말하면 사람이 정한 것(확정),
+        이름 없이 동의하면 AI가 제안해 둔 목표를 확정한다. '○○는 안 돼/피하자'처럼 이름이
+        부정과 함께 나오면 목표로 잡지 않고, 그 사람이 현재 목표였다면 취소한다."""
+        name, negated = self._named_split(text, self._mafia_kill_candidates())
+        plan = getattr(self, "_mafia_kill_plan", None)
+        if name:
+            self._mafia_set_plan(name, "human", True)
+        elif negated:
+            if plan and plan["target"] in negated:
+                self._mafia_clear_plan()
+        elif (plan and plan["by"] == "ai" and not plan["confirmed"]
+              and self._AGREE_RE.search(text or "") and not self._DISAGREE_RE.search(text or "")):
+            self._mafia_set_plan(plan["target"], "human", True)
+
+    def _mafia_clear_plan(self):
+        """현재 목표를 취소하고 사람 마피아 비밀방에 알린다."""
+        plan = getattr(self, "_mafia_kill_plan", None)
+        if not plan:
+            return
+        self._mafia_kill_plan = None
+        self._mafia_secret_broadcast("📌 오늘 밤 목표", f"{plan['target']} 취소")
+
+    def _mafia_set_plan(self, target, by, confirmed):
+        """목표를 갱신하고, 바뀌었으면 사람 마피아 비밀방에 알린다."""
+        plan = getattr(self, "_mafia_kill_plan", None)
+        if plan and plan["target"] == target and plan["confirmed"] == confirmed:
+            return
+        self._mafia_kill_plan = {"target": target, "by": by, "confirmed": confirmed}
+        self._mafia_secret_broadcast("📌 오늘 밤 목표", f"{target} ({'확정' if confirmed else '제안'})")
+
+    def _mafia_secret_broadcast(self, who, text):
+        """사람 마피아(호스트 본인 포함)의 비밀방에만 한 줄 전달."""
+        me = getattr(self.engine, "name", None)
+        for n in self._mafia_secret_recipients():
+            if n == me:
+                if self._mafia_room_wanted():
+                    self._mafia_room_append(who, text)
+            else:
+                self._mafia_send_private(n, "mafia_say", name=who, text=text)
+
+    _MAFIA_AI_FALLBACK = ("오늘 밤엔 누가 좋을까?", "난 조용한 사람이 신경 쓰이는데ㅋㅋ",
+                          "우리 너무 티 내지 말자~", "일단 의견부터 들어보자!")
+
+    def _mafia_ai_worker(self, pl, speaker, text, order):
+        import random as _rr
+        import time as _t
+        try:
+            if order:
+                _t.sleep(1.5 + _rr.random())
+            targets = [n for n in self.core.alive_players()
+                       if (self.core.players.get(n) or {}).get("role") != "mafia"]
+            history = "\n".join(list(getattr(self, "_mafia_secret_log", []))[-8:])
+            base = (f"[마피아 비밀 채팅] 지금은 밤이고, 마피아 동료들끼리만 보는 비밀 대화방입니다. "
+                    f"오늘 밤 살해 후보(시민 쪽 생존자): {', '.join(targets) or '없음'}. "
+                    f"최근 대화:\n{history}\n") if history else (
+                    f"[마피아 비밀 채팅] 지금은 밤이고, 마피아 동료들끼리만 보는 비밀 대화방입니다. "
+                    f"오늘 밤 살해 후보(시민 쪽 생존자): {', '.join(targets) or '없음'}. ")
+            plan = getattr(self, "_mafia_kill_plan", None)
+            plan_t = plan["target"] if plan and plan["confirmed"] else None
+            if speaker and text:
+                if plan_t:
+                    goal = (f"동료가 '{plan_t}'을(를) 오늘 밤 목표로 정했습니다. 그 결정에 동의하며 "
+                            f"'{plan_t}' 이름을 넣어 짧게 확정 멘트를 하세요. 다른 사람을 제안하지 마세요.")
+                else:
+                    goal = ("누구를 노릴지 아직 안 정해졌으니, 후보 중 딱 한 명을 골라 이름을 넣어 "
+                            "구체적으로 제안하거나 동료 의견에 맞춰 조율하세요.")
+                prompt = (base + f"동료 '{speaker}'님이 방금 말했습니다: \"{text}\"\n"
+                          "그 말에 직접 대답하세요. 친구랑 카톡하듯 편하게 1~2문장, 이름을 부르거나 "
+                          "되물어서 대화가 이어지게. " + goal + " "
+                          "후보 이름은 위 목록에 있는 사람만, 자기 자신이나 동료는 절대 대상으로 말하지 마세요.")
+            else:
+                prompt = (base + "동료에게 먼저 말을 걸어 오늘 밤 누구를 노릴지 후보 중 한 명의 이름을 "
+                          "넣어 제안하고 의견을 물어보세요. 친구랑 카톡하듯 편하게 1문장. 후보 이름은 위 목록에서만.")
+            reply = None
+            for _ in range(3):
+                reply = pl.say(prompt)
+                if reply:
+                    break
+                _t.sleep(1.5)
+            reply = split_chat_tags(clean_llm_dialect((reply or "").strip()))
+            if not reply or len(reply) > 160:
+                if plan_t:
+                    reply = f"좋아, {plan_t}로 가자!"
+                elif targets:
+                    reply = f"오늘은 {_rr.choice(targets)} 어때?"
+                else:
+                    reply = _rr.choice(self._MAFIA_AI_FALLBACK)
+            self._mafia_ai_q.put((pl, reply))    # UI 반영은 메인스레드 폴러가 한다
+        except Exception as e:
+            import applog
+            applog.log("mafia_ai_worker", exc=e)
+
+    def _ensure_mafia_ai_poll(self):
+        """비밀방 AI 답장 큐 폴러를 (중복 없이) 시작한다 — 밤이 끝나면 스스로 멈춘다.
+        워커 스레드가 root.after를 직접 부르면 'main thread is not in main loop'로
+        조용히 사라질 수 있어, 유령방·최후변론과 같은 큐 방식을 쓴다."""
+        import queue as _q
+        if getattr(self, "_mafia_ai_q", None) is None:
+            self._mafia_ai_q = _q.Queue()
+        if not getattr(self, "_mafia_ai_poll_on", False):
+            self._mafia_ai_poll_on = True
+            self._poll_mafia_ai_queue()
+
+    def _poll_mafia_ai_queue(self):
+        try:
+            while True:
+                pl, reply = self._mafia_ai_q.get_nowait()
+                self._mafia_ai_post(pl, reply)
+        except Exception as e:
+            import queue as _q
+            if not isinstance(e, _q.Empty):
+                import applog
+                applog.log("mafia_ai_poll", exc=e)
+        if self.mafia_active and self.core.phase == Phase.NIGHT:
+            self.root.after(250, self._poll_mafia_ai_queue)
+        else:
+            self._mafia_ai_poll_on = False
+
+    def _mafia_ai_post(self, pl, reply):
+        """AI 마피아의 비밀 발언을 사람 마피아들에게 전달(밤이 끝났으면 버린다)."""
+        if (not self.mafia_active or self.core.phase != Phase.NIGHT or not pl.alive):
+            return
+        log = getattr(self, "_mafia_secret_log", None)
+        if log is None:
+            log = self._mafia_secret_log = []
+        log.append(f"{pl.name}: {reply}")
+        del log[:-10]
+        for other in self.ai.players:           # 다른 AI 마피아도 이 말을 기억
+            if other is not pl and other.alive and other.role == "mafia" and other.booted:
+                other.observe(pl.name, f"(마피아 비밀 대화) {reply}")
+        self._mafia_secret_broadcast(pl.name, reply)
+        # AI가 제안한 이름은 '제안'으로 기록(사람이 이미 확정한 목표는 AI 말로 바뀌지 않는다)
+        plan = getattr(self, "_mafia_kill_plan", None)
+        if not (plan and plan["confirmed"]):
+            named, _neg = self._named_split(reply, self._mafia_kill_candidates())
+            if named:
+                self._mafia_set_plan(named, "ai", False)
+
+    def _mafia_ai_opener(self):
+        """밤 시작 후 비밀방이 열릴 즈음 AI 마피아가 먼저 말을 건다(호스트 전용)."""
+        if getattr(self, "_mafia_secret_log", None):
+            return                                # 이미 대화가 오가는 중이면 굳이 또 꺼내지 않는다
+        self._mafia_ai_respond(None, None)
 
     def _mafia_team_names(self, me):
         """내가 마피아일 때 비밀 채팅을 보낼 사람 동료(AI 제외, 나 제외)."""
@@ -849,6 +1121,24 @@ class MafiaUIMixin:
             my_role = (self.core.players.get(me_r) or {}).get("role") or getattr(self, "_my_mafia_role", None)
             if my_role == "mafia" and ev.get("text"):
                 self._mafia_room_append(ev.get("name") or "?", ev.get("text", ""))
+        elif t == "ghost_to_ai":
+            # 원격 사망자가 유령방에 쓴 말을 호스트의 사망 AI에게 전달
+            spk = ev.get("name")
+            info = self.core.players.get(spk) or {}
+            if (self._mafia_is_host() and spk and ev.get("text") and self.mafia_active
+                    and not info.get("is_ai") and not info.get("alive", True)):
+                self._ghost_ai_reply(ev.get("text", ""), speaker=spk)
+        elif t == "ghost_say":
+            # 호스트의 사망 AI가 보낸 유령방 답장(개인 전송) — 내 유령방이 열려 있을 때만 표시
+            if ev.get("text") and getattr(self, "_ghost_list", None):
+                self._append_ghost(f"👻 {ev.get('name') or '?'}: {ev.get('text')}", ai=True)
+        elif t == "mafia_to_ai":
+            # 원격 사람 마피아가 비밀방에 쓴 말을 호스트의 AI 마피아에게 전달
+            spk = ev.get("name")
+            if (self._mafia_is_host() and spk and ev.get("text")
+                    and (self.core.players.get(spk) or {}).get("role") == "mafia"
+                    and (self.core.players.get(spk) or {}).get("alive", True)):
+                self._mafia_ai_respond(spk, ev.get("text", ""))
         elif t == "user_say":
             # v1.61 — 게임 시작 후(낮/밤) 다른 사람의 발언 수신. 호스트는 AI가
             # 이 발언을 실제로 기억하도록 observe_all에도 넣어줘야 한다(이전엔
@@ -1469,10 +1759,10 @@ class MafiaUIMixin:
                 results["invest"] = _rr.choice(cand)
         last_saved = getattr(self.core, "last_protect", None)
         for pl in doctor_ais:
-            # 의사 구조 후보: 자투 금지 + 마피아 제외 + 어젯밤 연속 보호 제외
-            cand = [n for n in alive if n != pl.name and n not in all_mafias and n != last_saved]
+            # 의사 구조 후보: 자기 자신 포함(사람 의사와 동일 규칙) + 마피아 제외 + 어젯밤 연속 보호 제외
+            cand = [n for n in alive if n not in all_mafias and n != last_saved]
             if not cand:
-                cand = [n for n in alive if n != pl.name and n not in all_mafias]
+                cand = [n for n in alive if n not in all_mafias]
             if results.get("kill") in cand and _rr.random() < 0.30 and len(cand) > 1:
                 cand.remove(results["kill"])
             if cand:
@@ -2128,7 +2418,7 @@ class MafiaUIMixin:
                     known.add(name)
                     self.add_mafia_system(
                         f"⚠ {name}님과의 연결이 끊긴 것 같습니다(응답 없음) — "
-                        "투표·밤 시간은 그대로 진행되며, 재접속하면 자동으로 다시 인식됩니다.")
+                        "게임이 멈추지 않도록 그대로 진행합니다.")
                     # v1.61 — 끊긴 채로 두면 그 사람 표를 기다리느라 매 페이즈
                     # 최대 타임아웃(15~30초)까지 게임이 멈추고, 승패 판정에서도
                     # 계속 생존자로 잘못 집계됐다(복수 인간 플레이 전수 검토
@@ -2143,7 +2433,12 @@ class MafiaUIMixin:
                             return
                 elif online and was_disconnected:
                     known.discard(name)
-                    self.add_mafia_system(f"✅ {name}님이 다시 연결되었습니다.")
+                    if p.get("alive", True):
+                        self.add_mafia_system(f"✅ {name}님이 다시 연결되었습니다.")
+                    else:
+                        self.add_mafia_system(
+                            f"✅ {name}님이 다시 연결되었습니다 — 접속이 끊긴 사이 사망 처리되어 "
+                            "이번 판은 관전만 할 수 있습니다.")
         except Exception:
             pass
         self._disconnect_watch_timer = self.root.after(4000, self._mafia_poll_disconnects)
@@ -2959,7 +3254,7 @@ class MafiaUIMixin:
                         continue
                     # v1.23 — 변론 발화는 채팅 반영만 함(찬반 개시는 60초 후 별도)
                     self._defense_has_spoken = True
-                    self.add_mafia_bubble(t, name)
+                    self.add_mafia_ai(name, t)   # 로컬 표시 + 원격 참가자에게 asay 방송
         except Exception:
             pass
         if getattr(self, "_defense_ui_q", None) is not None and getattr(self.core, "defendant", None):
@@ -3060,6 +3355,8 @@ class MafiaUIMixin:
         if not me or self.core.players.get(me, {}).get("alive", False):
             self.add_mafia_system("👻 유령 채팅방은 사망자 전용입니다 — 지금은 생존 중이라 들어올 수 없습니다")
             return
+        self._ghost_log = []
+        self._ghost_alone_noted = False
         # v1.17 — 유령방 UI 큐 준비(워커→메인스레드 안전 반영 경로)
         import queue as _q
         self._ghost_ui_q = getattr(self, "_ghost_ui_q", None) or _q.Queue()
@@ -3126,9 +3423,16 @@ class MafiaUIMixin:
                     pass
             _th.Thread(target=worker, args=(pl, i), daemon=True).start()
         # UI 큐 폴러 — 메인스레드에서만 위젯 접근
-        self._poll_ghost_ui_queue()
+        self._ensure_ghost_poll()
         # LLM 실패/침묵 시 기본 문구 — 3~5초 후
         self.root.after(3000, self._ghost_fallback_lines)
+
+    def _ensure_ghost_poll(self):
+        """유령방 UI 큐 폴러를 (중복 없이) 시작한다. 사망 AI가 없어 첫 수다가
+        안 떴던 방에서도, 이후 유저 발언에 대한 AI 답장이 화면에 뜨려면 필요."""
+        if not getattr(self, "_ghost_poll_on", False):
+            self._ghost_poll_on = True
+            self._poll_ghost_ui_queue()
 
     def _poll_ghost_ui_queue(self):
         """v1.17 — 유령방 UI 큐 드레인(메인스레드 전용). 0.3초 주기."""
@@ -3140,6 +3444,8 @@ class MafiaUIMixin:
             pass
         if getattr(self, "_ghost_ui_open", False):
             self.root.after(300, self._poll_ghost_ui_queue)
+        else:
+            self._ghost_poll_on = False
 
     def _ghost_whisper_ok(self, txt):
         """유령방 문구 검증 — 실제 게임 채팅에 겹치는 모양새 방지(느낌표/쓸데없이)."""
@@ -3209,11 +3515,129 @@ class MafiaUIMixin:
         self._append_ghost(f"{self.engine.name}: {txt}")
         # 다른 유령들의 화면에 실제로도 전달될 수 있어나 현재 P2P 협재임으로 로컬만.
         # (문서 대로의 '유빙방'은 로컬 구현 — P2P 확장은 예정)
+        # 내 말에 사망 AI가 대답해 티키타카가 이어지게 한다.
+        self._ghost_ai_reply(txt)
+
+    _GHOST_FALLBACK_REPLY = (
+        "ㅋㅋ 맞아 그러게", "오 그렇구나~", "나도 그렇게 생각해", "헐 진짜?",
+        "아 그거 좀 억울했지ㅠㅠ", "ㅋㅋㅋ 인정", "그럼 산 사람들 누가 이길까?")
+
+    _NO_GHOST_PARTNER = "(아직 이 방에 대화 상대가 없어요 — 다른 참가자가 죽으면 함께 수다 떨 수 있어요)"
+
+    def _ghost_ai_reply(self, user_text, speaker=None):
+        """유령방에서 유저가 말하면 사망 AI 1~2명이 그 말에 직접 대답한다.
+        AI는 호스트에서만 돌아간다 — 원격 참가자는 호스트에 말을 중계하고(ghost_to_ai),
+        호스트가 사망 AI의 답을 그 참가자에게만 개인 전송(ghost_say)한다.
+        speaker가 있으면 호스트가 원격 참가자 대신 처리하는 경우다."""
+        import random as _rr
+        import threading as _th
+        import time as _t
+        own = getattr(self.engine, "name", "")
+        if speaker is None and not self._mafia_is_host():
+            self._mafia_send_to_host("ghost_to_ai", name=own, text=user_text)
+            return
+        remote = speaker is not None and speaker != own
+        me = speaker if remote else own
+        ais = [pl for pl in (getattr(self, "ai", None) and self.ai.players or [])
+               if not pl.alive and getattr(pl, "booted", False)]
+        if not ais:
+            if remote:
+                self._mafia_send_private(me, "ghost_say", name="안내", text=self._NO_GHOST_PARTNER)
+            elif not getattr(self, "_ghost_alone_noted", False):
+                self._ghost_alone_noted = True
+                self._append_ghost(self._NO_GHOST_PARTNER)
+            return
+        if not remote:
+            self._ghost_alone_noted = False
+            self._ensure_ghost_poll()
+        else:
+            self._ensure_ghost_relay_poll()
+        _rr.shuffle(ais)
+        picks = ais[:2] if (len(ais) > 1 and _rr.random() < 0.5) else ais[:1]
+        if remote:
+            rlog = getattr(self, "_ghost_remote_log", None)
+            if rlog is None:
+                rlog = self._ghost_remote_log = {}
+            lines = rlog.setdefault(me, [])
+            lines.append(f"👻 {me}: {user_text}")
+            del lines[:-30]
+            recent = lines[-8:]
+        else:
+            recent = list(getattr(self, "_ghost_log", []))[-8:]
+        history = "\n".join(recent)
+
+        def worker(p_, order):
+            try:
+                if order:
+                    _t.sleep(1.5 + _rr.random())       # 두 번째 AI는 조금 뒤에 끼어든다
+                role_str = _role_kr(self.core.reveal_role(p_.name))
+                prompt = (
+                    f"[유령 채팅방 대화] 당신('{p_.name}', 직업 {role_str})은 사망해 유령방에서 "
+                    f"수다 중입니다. 최근 대화:\n{history}\n"
+                    f"방금 '{me}'님이 말했습니다: \"{user_text}\"\n"
+                    f"이 말에 직접 대답하세요. 친구랑 카톡하듯 편하게, 1~2문장, 이름을 부르거나 "
+                    f"되물어서 대화가 이어지게. 게임 결과를 가르치듯 설명하지 마세요.")
+                reply = None
+                for _ in range(3):                      # 다른 발화 중(busy)이면 잠깐 뒤 재시도
+                    reply = p_.say(prompt)
+                    if reply:
+                        break
+                    _t.sleep(1.5)
+                reply = split_chat_tags(clean_llm_dialect((reply or "").strip()))
+                if not reply:
+                    reply = _rr.choice(self._GHOST_FALLBACK_REPLY)
+                if remote:
+                    self._ghost_relay_q.put((me, p_.name, reply))
+                else:
+                    self._ghost_ui_q.put(("ai", p_.name, reply))
+            except Exception:
+                if remote:      # 대기 카운터가 남지 않도록 실패해도 반드시 하나는 돌려준다
+                    self._ghost_relay_q.put((me, p_.name, _rr.choice(self._GHOST_FALLBACK_REPLY)))
+        for i, pl in enumerate(picks):
+            if remote:
+                self._ghost_relay_pending += 1
+            _th.Thread(target=worker, args=(pl, i), daemon=True).start()
+
+    def _ensure_ghost_relay_poll(self):
+        """원격 사망자에게 보낼 AI 답장 큐 폴러(메인스레드) — 대기 중인 답장이 없으면 멈춘다."""
+        import queue as _q
+        if getattr(self, "_ghost_relay_q", None) is None:
+            self._ghost_relay_q = _q.Queue()
+            self._ghost_relay_pending = 0
+        if not getattr(self, "_ghost_relay_on", False):
+            self._ghost_relay_on = True
+            self.root.after(0, self._poll_ghost_relay)
+
+    def _poll_ghost_relay(self):
+        import queue as _q
+        try:
+            while True:
+                who, ai_name, text = self._ghost_relay_q.get_nowait()
+                self._ghost_relay_pending -= 1
+                lines = getattr(self, "_ghost_remote_log", {}).get(who)
+                if lines is not None:
+                    lines.append(f"👻 {ai_name}: {text}")
+                    del lines[:-30]
+                self._mafia_send_private(who, "ghost_say", name=ai_name, text=text)
+        except _q.Empty:
+            pass
+        except Exception as e:
+            import applog
+            applog.log("ghost_relay_poll", exc=e)
+        if self._ghost_relay_pending > 0:
+            self.root.after(300, self._poll_ghost_relay)
+        else:
+            self._ghost_relay_on = False
 
     def _append_ghost(self, text, ai=False):
         box = getattr(self, "_ghost_list", None)
         if not box:
             return
+        log = getattr(self, "_ghost_log", None)
+        if log is None:
+            log = self._ghost_log = []
+        log.append(text)
+        del log[:-30]
         box.configure(state="normal")
         box.insert("end", text + "\n")
         box.configure(state="disabled")
@@ -3435,7 +3859,7 @@ class MafiaUIMixin:
         if result == "executed":
             self.add_mafia_system(f"⚖ 찬성 {yes} : 반대 {no} — '{name}' 님 처형 확정!")
             if role2:
-                self.add_mafia_system(f"🎭 직업 공개 — {name} ({_role_kr(role2)}였습니다)")
+                self.add_mafia_system(f"🎭 직업 공개 — {name} ({_role_was(role2)})")
             if name == getattr(self.engine, "name", None):
                 self._open_ghost_chat()
         else:
@@ -3523,7 +3947,10 @@ class MafiaUIMixin:
         self.mafia_start_btn.configure(text="[게임 진행 중]", state="disabled")
         self.root.after(1800, self._show_night_panel)
         self.root.after(2200, self._maybe_open_mafia_room)   # 사람 마피아 동료가 있으면 비밀방 자동 생성
-        self._trigger_night_actions()      # AI 마피아/의사 밤 행동 백그라운드 접수
+        self._mafia_secret_log = []                          # 이번 밤의 마피아 비밀 대화 기록
+        self._mafia_kill_plan = None                         # 이번 밤 대화로 정한 살해 목표
+        self.root.after(4500, self._mafia_ai_opener)         # 방이 열리면 AI 마피아가 먼저 말을 건다
+        self._trigger_night_actions()     # AI 마피아/의사 밤 행동 백그라운드 접수
         # 밤 카운트다운은 thread가 아닌 after 루프로 — daemon 스레드와의 경합 제거
         self._night_resolve_bg()
 
@@ -3767,9 +4194,15 @@ class MafiaUIMixin:
             humans = [n for n in mafias if not core.players[n].get("is_ai")]
             human_picks = [core.night_targets[h] for h in humans
                            if h in core.night_targets and valid(core.night_targets[h])]
+            plan = getattr(self, "_mafia_kill_plan", None)
+            plan_t = plan["target"] if plan else None
             if human_picks:
                 team = human_picks[0]
                 who = "사람 마피아의 먼저 고른 선택"
+            elif plan_t and valid(plan_t):
+                team = plan_t
+                who = ("비밀방 대화로 정한 대상" if plan["confirmed"]
+                       else "비밀방에서 AI 마피아가 제안한 대상")
             else:
                 picks = [t for m, t in core.night_targets.items() if m in mafias and valid(t)]
                 if not picks:
@@ -3885,7 +4318,7 @@ class MafiaUIMixin:
             self.add_mafia_host(
                 f"아침이 밝았습니다… 유감스럽게도 '{victim}' 님의 자리가 비었습니다.")
             if role2:
-                self.add_mafia_system(f"🎭 직업 공개 — {victim} ({_role_kr(role2)}였습니다)")
+                self.add_mafia_system(f"🎭 직업 공개 — {victim} ({_role_was(role2)})")
             self._mafia_show_splash(
                 title=f"간밤의 비극 — '{victim}' 사망",
                 subtitle=f"마피아의 잔혹한 습격으로 '{victim}' 님이 사망했습니다.\n🎭 정체: [{_role_kr(role2)}]",

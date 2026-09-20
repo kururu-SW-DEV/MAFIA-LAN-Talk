@@ -57,7 +57,6 @@ class GameCore:
         self.police_invest = {}         # 경찰 조사 이력: target -> "mafia"|"citizen"
         self.police_report = None       # 직전 밤 경찰 조사 결과 (target, result)
         self.last_protect = None        # 의사 직전 밤 보호 대상(연속 보호 금지 판정)
-        self.first_night_done = True    # 낮 1일차 시작이므로 첫 밤부터 정상 킬 허용
         self.night_targets = {}         # 밤 다수 마피아 개별 지목: mafia_name -> target
         self.abstains = set()           # 기권(투표 타임아웃)자
         self.voted_history = []         # 직전 낮 투표 내역(심리전 근거)
@@ -225,8 +224,8 @@ class GameCore:
                 return False
             if not target or target not in self.players or not self.players[target]["alive"]:
                 return False
-            if self.last_protect == target and self.first_night_done:
-                return False  # 연속 보호 금지 (첫날 밤 처리는 first_night_done 조건 우회)
+            if self.last_protect == target:
+                return False  # 연속 보호 금지
             self.set_night_save(target)
             return True
 
@@ -290,19 +289,16 @@ class GameCore:
                     self.night_target = agreed
                 else:
                     self.night_target = None  # 합의 실패 시 킬 무효
+            # 첫날 밤부터 정상 살해 허용(첫날 밤 킬 금지 규칙 없음)
             if (self.night_target
-                    and self.players.get(self.night_target, {}).get("alive")
-                    and self.first_night_done):          # 첫날 밤 킬 금지
+                    and self.players.get(self.night_target, {}).get("alive")):
                 if self.night_saved and self.night_target == self.night_saved:
                     pass  # 의사가 살렸다
                 else:
                     self.players[self.night_target]["alive"] = False
                     victim = self.night_target
-            elif self.night_target and not self.first_night_done:
-                self.night_target = None   # 첫날 밤 킬 금지 — 무효화
             self.log.append({"phase": "night", "day": self.day_no,
                               "kind": "victim", "who": victim})
-            self.first_night_done = True
             self.last_protect = self.night_saved          # 연속 보호 금지용
             self.night_targets.clear()
             self.phase = Phase.DAY

@@ -34,20 +34,56 @@ _LLM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MAFIA-LAN-Talk/1.61
 _cache_lock = threading.Lock()
 
 
+def _trim_to_sentence(text):
+    """토큰 한도로 끝이 잘린 응답을 마지막으로 완결된 문장(또는 ㅋㅋ/~ 등 끝맺음)까지만 남긴다.
+    끝맺음이 너무 앞이거나 없으면 원문 그대로 둔다."""
+    if not text:
+        return text
+    for i in range(len(text) - 1, -1, -1):
+        if text[i] in ".!?…~ㅋㅎㅠ":
+            return text[:i + 1].strip() if i >= 8 else text
+    return text
+
+
 def _llm_call(messages, max_tokens=350, timeout=45):
-    """OpenAI 호환 /v1/chat/completions 호출. 실패 시 None."""
+    """OpenAI 호환 호출. 응답이 토큰 한도(finish_reason=length)로 잘렸으면 한도를 4배로 올려
+    한 번 더 요청하고, 그래도 잘리면 마지막 완결 문장까지만 돌려준다. 실패 시 None."""
+    meta = {}
+    text = _llm_call_once(messages, max_tokens, timeout, meta)
+    if meta.get("finish") == "length":
+        try:
+            applog.log("mafia_llm_truncated", detail=f"max_tokens={max_tokens} len={len(text or '')} → 재요청")
+        except Exception:
+            pass
+        meta2 = {}
+        text2 = _llm_call_once(messages, max_tokens * 4, timeout, meta2)
+        if text2:
+            text, meta = text2, meta2
+        if meta.get("finish") == "length":
+            text = _trim_to_sentence(text)
+    return text
+
+
+def _llm_call_once(messages, max_tokens, timeout, meta, _reasoning=True):
+    """OpenAI 호환 /v1/chat/completions 호출 1회. 실패 시 None. meta['finish']에 finish_reason."""
     import mafia_config
     key = get_llm_api_key()
     ov = dict(mafia_config.RUNTIME_OVERRIDES)
     if not ov and getattr(mafia_config, "_OVERRIDES_FILE", None):
         mafia_config.load_overrides()
         ov = dict(mafia_config.RUNTIME_OVERRIDES)
-    body = json.dumps({
+    payload = {
         "model": (ov.get("model") or LLM_MODEL),
         "messages": messages,
         "max_tokens": max_tokens,
-    }).encode("utf-8")
+    }
     b_url = (ov.get("base_url") or LLM_BASE_URL).rstrip("/")
+    # Gemini(생각 기능이 기본 켜진 모델)는 생각에 쓴 토큰도 max_tokens에 포함돼 답이 잘리거나
+    # 비므로, 생각을 낮춰 달라고 요청한다(모르는 모델이 400으로 거절하면 아래에서 빼고 재시도).
+    gemini = "generativelanguage.googleapis.com" in b_url
+    if gemini and _reasoning:
+        payload["reasoning_effort"] = "low"
+    body = json.dumps(payload).encode("utf-8")
     if b_url.endswith("/v1"):
         b_url = b_url[:-3]
     if not b_url:
@@ -83,12 +119,17 @@ def _llm_call(messages, max_tokens=350, timeout=45):
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 d = json.loads(r.read().decode("utf-8"))
             _llm_path_cache[b_url] = url
-            msg = d["choices"][0]["message"]
+            choice = d["choices"][0]
+            meta["finish"] = choice.get("finish_reason")
+            msg = choice["message"]
             return (msg.get("content") or "").strip()
         except urllib.error.HTTPError as e:
             last_err = e
             if e.code == 404:
                 continue          # 경로가 다른 서버일 수 있음 — 다음 후보
+            if e.code == 400 and gemini and _reasoning:
+                # 이 모델이 reasoning_effort를 지원하지 않는 경우 — 빼고 다시 한 번
+                return _llm_call_once(messages, max_tokens, timeout, meta, _reasoning=False)
             break
         except Exception as e:
             last_err = e
@@ -100,7 +141,8 @@ def _llm_call(messages, max_tokens=350, timeout=45):
         detail = f"base_url={b_url} model={ov.get('model') or LLM_MODEL}"
         if isinstance(last_err, urllib.error.HTTPError):
             try:
-                detail += " body=" + last_err.read().decode("utf-8", "replace")[:200].replace(key, "***")
+                err_body = last_err.read().decode("utf-8", "replace")[:200]
+                detail += " body=" + (err_body.replace(key, "***") if key else err_body)
             except Exception:
                 pass
         applog.log("mafia_llm_call", exc=last_err, detail=detail)
@@ -242,6 +284,10 @@ class PlayerAgent:
                 "  - 외국어·한자·번역투 금지 — 실제 한국 단체 카톡방 구어체만.\n"
                 "  - 의심을 바꿀 때는 이유를 붙여라(급격한 태세전환 금지).\n"
                 "  - 비밀 정보(내 역할/전략)는 절대 채팅에 쓰지 마라.\n"
+                "  - [말투] 친구들끼리 노는 편안한 분위기로. 따지거나 추궁하는 어투, 논리·근거를\n"
+                "    나열하는 발표식 말투, 상대 발언을 조목조목 반박하는 말투는 피하고, 의심은\n"
+                "    '왠지 좀 그래 보여~' 같은 가벼운 느낌으로 말하라. 리액션·농담·공감을 섞어라.\n"
+                "  - 반박당하거나 의심받아도 날 세우지 말고 웃으며 받아 넘겨라.\n"
                 "  - 한 사람에게만 집중해서 공격·의심하지 마라(다구리 금지). 이미 누가 몰리고 있으면\n"
                 "    같이 몰지 말고 다른 시선·변호·질문을 섞어라. 사람 참가자도 다른 참가자와 똑같이 대하라.\n"
                 f"  - 대사는 {HERMES_REPLY_LANG} 2문장 이내. 감정에 따라 ㅋㅋ/ㅠㅠ를 갈려서 써라.")

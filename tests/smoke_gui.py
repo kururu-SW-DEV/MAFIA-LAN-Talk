@@ -64,6 +64,11 @@ res = dict(
 app._set_tab("friend")
 res["friend_rows_after_switch"] = len(app.pinner.winfo_children())
 app._set_tab("chat")
+try:
+    if getattr(app, "_notifier", None) is not None:
+        app._notifier.close()      # 트레이 아이콘 제거 — 안 하면 종료 후에도 죽은 아이콘이 남는다
+except Exception:
+    pass
 root.destroy()
 
 print("engine =", app.engine is not None, "| port =", app.engine.port if app.engine else None)

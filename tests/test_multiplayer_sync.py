@@ -81,6 +81,14 @@ def fake_llm_call(messages, max_tokens=350, timeout=45):
         pool = [c.strip() for c in (cm.group(1).split(",") if cm else []) if c.strip()]
         pick = random.choice(pool) if pool else name
         return f"투표 {pick}"
+    if "마피아 비밀 채팅" in user_c:
+        # 공개 채팅 유출 검사용 고유 문구. 확정 지시가 있으면 그 이름으로 동의, 아니면 후보 중 하나 제안.
+        cf = re.search(r"'([^']+)'을\(를\) 오늘 밤 목표로 정했습니다", user_c)
+        if cf:
+            return f"비밀응답 좋아 {cf.group(1)}로 가자"
+        cd = re.search(r"살해 후보\(시민 쪽 생존자\):\s*([^.\n]+)\.", user_c)
+        pool = [c.strip() for c in (cd.group(1).split(",") if cd else []) if c.strip() and c.strip() != "없음"]
+        return f"비밀응답 {random.choice(pool)} 어때?" if pool else "비밀응답 ㅋㅋ"
     return "음 좀 더 지켜볼게요 ㅋㅋ"
 
 
@@ -351,6 +359,14 @@ try:
         appA.core.players[ai_names[1]]["role"] = "citizen"
         appA.core.night_targets.clear()
 
+    # 이 아래 시나리오는 오래 걸려서, 호스트의 접속 끊김 감시기가 B를 '응답 없음'으로 보고
+    # 사망 처리→게임 종료까지 가버려 AI 대화 검증을 방해한다(테스트 환경 한정 — 실측).
+    # ⑥ 직전까지 감시기를 멈춰 두고 ⑥에서 원래대로 되살린다.
+    _wd = getattr(appA, "_disconnect_watch_timer", None)
+    if _wd:
+        appA.root.after_cancel(_wd)
+    appA._mafia_poll_disconnects = lambda: None
+
     # ===================== 마피아 전용 비밀방(자동 생성) =====================
     with appA.core.lock:
         appA.core.players["이팀장B"]["role"] = "mafia"
@@ -392,6 +408,167 @@ try:
     stubB.core.players[a_nm]["alive"] = True
     appA._mafia_room_close(); stubB._mafia_room_close()
     check("비밀방: 닫기 후 정리됨", appA._mafia_room is None and stubB._mafia_room is None)
+
+    # ===================== 마피아 비밀방 — 사람 ↔ AI 마피아 티키타카 =====================
+    ai_m = ai_names[0]
+    ai_pl = next(p_ for p_ in appA.ai.players if p_.name == ai_m)
+    ai_pl.role, ai_pl.alive, ai_pl.booted = "mafia", True, True
+    for other_ai in appA.ai.players:          # 게임 시작 때 무작위로 배정된 다른 AI의 마피아 역할 제거
+        if other_ai is not ai_pl:             # (남아 있으면 그 AI가 대신 답해 검사가 흔들린다)
+            other_ai.role, other_ai.alive, other_ai.booted = "citizen", True, True
+    for n_, p_ in appA.core.players.items():
+        p_["role"] = "citizen"
+        p_["alive"] = True
+    for who_ in (ai_m, "이팀장B"):
+        appA.core.players[who_]["role"] = "mafia"
+    appA.core.phase = Phase.NIGHT
+    appA.mafia_active = True
+    for p_ in stubB.core.players.values():
+        p_["role"] = "citizen"
+        p_["alive"] = True
+    stubB.core.players["이팀장B"]["role"] = "mafia"
+    stubB.core.players[ai_m]["role"] = "mafia"
+    stubB.core.players[ai_m]["is_ai"] = True
+    stubB.core.phase = Phase.NIGHT
+    stubB._my_mafia_role = "mafia"
+    stubB._my_mafia_mates = [ai_m]
+
+    # (1) 원격 사람 마피아 1명 + AI 마피아: 사람 동료가 없어도 비밀방이 열린다
+    appA._mafia_secret_log = []
+    stubB._mafia_room_history = []
+    check("사람↔AI: 사람 동료 없이 AI 마피아만 있어도 비밀방이 필요하다고 판단함",
+          stubB._mafia_team_names("이팀장B") == [] and stubB._mafia_room_wanted())
+    stubB._maybe_open_mafia_room()
+    check("사람↔AI: AI 동료만 있어도 원격 사람의 비밀방이 열림", stubB._mafia_room is not None)
+    stubB._mafia_room_ent.insert(0, "오늘은 누구 노릴까")
+    stubB._mafia_room_send()
+    check("사람↔AI: 원격 사람의 말에 AI 마피아가 비밀방으로 답장함(원격→호스트→AI→원격)",
+          pump(lambda: any(w == ai_m for w, _t in stubB._mafia_room_history), timeout=15))
+    check("사람↔AI: AI 마피아의 답장은 공개 게임방 채팅에 노출되지 않음",
+          not any("비밀응답" in r.get("text", "") for r in appA.mafia_history))
+    # 두 번째 말도 이어서 답장(티키타카)
+    n_before = sum(1 for w, _t in stubB._mafia_room_history if w == ai_m)
+    stubB._mafia_room_ent.insert(0, "그럼 그 사람으로 하자")
+    stubB._mafia_room_send()
+    check("사람↔AI: 두 번째 말에도 AI가 다시 답장함",
+          pump(lambda: sum(1 for w, _t in stubB._mafia_room_history if w == ai_m) > n_before, timeout=15))
+    stubB._mafia_room_close();
+
+    # (2) 호스트(사람 마피아) + AI 마피아: 호스트 본인 비밀방에서도 티키타카
+    for who_ in ("이팀장B",):
+        appA.core.players[who_]["role"] = "citizen"
+    appA.core.players[a_nm]["role"] = "mafia"
+    appA._mafia_room_history = []
+    appA._mafia_secret_log = []
+    appA._maybe_open_mafia_room()
+    check("사람↔AI: 호스트 사람 마피아도 AI 동료만 있으면 비밀방이 열림", appA._mafia_room is not None)
+    appA._mafia_ai_opener()
+    check("사람↔AI: AI 마피아가 먼저 말을 꺼냄(opener)",
+          pump(lambda: any(w == ai_m for w, _t in appA._mafia_room_history), timeout=15))
+    n_before = sum(1 for w, _t in appA._mafia_room_history if w == ai_m)
+    appA._mafia_room_ent.insert(0, "난 조용한 사람이 수상해")
+    appA._mafia_room_send()
+    check("사람↔AI: 호스트 사람의 말에도 AI 마피아가 답장함",
+          pump(lambda: sum(1 for w, _t in appA._mafia_room_history if w == ai_m) > n_before, timeout=15))
+    # ===================== 대화로 정한 살해 목표가 실제 합의에 반영됨 =====================
+    cands_ = appA._mafia_kill_candidates()
+    v1, v2, v3 = cands_[0], cands_[1], cands_[2]
+
+    def _quiet_reset():
+        pump(lambda: False, timeout=3.0)          # 이전 시나리오의 늦은 AI 답장이 끝나길 기다림
+        appA._mafia_kill_plan = None
+        appA._mafia_secret_log = []
+        appA._mafia_room_history = []
+        appA.core.night_targets.clear()
+        appA.core.night_target = None
+
+    # (a) 사람이 대화에서 이름을 말하면 확정 → AI 마피아가 따로 골라 둔 다른 대상이 있어도 그 사람으로 합의
+    _quiet_reset()
+    appA.core.night_targets[ai_m] = v2
+    appA._mafia_room_ent.insert(0, f"오늘 밤은 {v1} 노리자")
+    appA._mafia_room_send()
+    check("목표: 사람이 대화에서 이름을 말하면 확정 목표로 기록됨",
+          appA._mafia_kill_plan == {"target": v1, "by": "human", "confirmed": True})
+    check("목표: AI 마피아가 확정된 목표에 동의하는 답장을 함(이름 포함)",
+          pump(lambda: any(w == ai_m and v1 in t_ for w, t_ in appA._mafia_room_history), timeout=15))
+    check("목표: 비밀방에 '오늘 밤 목표 … 확정' 안내가 표시됨",
+          any(w == "📌 오늘 밤 목표" and v1 in t_ and "확정" in t_ for w, t_ in appA._mafia_room_history))
+    appA._reconcile_mafia_night()
+    check("목표: AI가 따로 정해 둔 대상이 있어도 대화로 정한 대상으로 살해가 합의됨",
+          appA.core.night_kill_agree() == v1 and appA.core.night_target == v1)
+
+    # (b) AI가 먼저 제안하고 사람이 이름 없이 동의하면 그 제안이 확정
+    _quiet_reset()
+    appA._mafia_ai_opener()
+    check("목표: AI가 먼저 제안하면 '제안' 상태로 기록됨",
+          pump(lambda: bool(appA._mafia_kill_plan) and appA._mafia_kill_plan["by"] == "ai"
+               and not appA._mafia_kill_plan["confirmed"], timeout=15))
+    prop = appA._mafia_kill_plan["target"]
+    appA._mafia_room_ent.insert(0, "좋아 그렇게 하자")
+    appA._mafia_room_send()
+    check("목표: 사람이 이름 없이 동의하면 AI의 제안이 확정됨",
+          appA._mafia_kill_plan == {"target": prop, "by": "human", "confirmed": True})
+    appA.core.night_targets[ai_m] = next(c for c in cands_ if c != prop)   # AI 개별 지목이 달라도
+    appA._reconcile_mafia_night()
+    check("목표: 동의로 확정된 AI 제안대로 살해가 합의됨", appA.core.night_kill_agree() == prop)
+
+    # (c) AI가 제안했어도 사람이 다른 이름을 말하면 사람 결정이 우선
+    _quiet_reset()
+    appA._mafia_ai_opener()
+    pump(lambda: bool(appA._mafia_kill_plan), timeout=15)
+    ai_prop = (appA._mafia_kill_plan or {}).get("target")
+    other = next(c for c in cands_ if c != ai_prop)
+    appA._mafia_room_ent.insert(0, f"아니 {other} 로 하자")
+    appA._mafia_room_send()
+    check("목표: AI 제안이 있어도 사람이 다른 이름을 말하면 사람 결정이 우선",
+          appA._mafia_kill_plan == {"target": other, "by": "human", "confirmed": True})
+    pump(lambda: False, timeout=3.0)
+    check("목표: 확정 뒤 AI가 다른 이름을 말해도 확정 목표가 바뀌지 않음",
+          appA._mafia_kill_plan["target"] == other)
+
+    # (d) 사람이 밤 패널에서 직접 고른 대상은 대화 목표보다 우선(기존 동작 유지)
+    appA.core.night_targets[a_nm] = v3 if v3 != other else v1
+    picked = appA.core.night_targets[a_nm]
+    appA._reconcile_mafia_night()
+    check("목표: 밤 패널에서 직접 고른 대상이 대화 목표보다 우선함",
+          appA.core.night_kill_agree() == picked)
+
+    # (e) 원격 사람 마피아가 대화로 정한 목표도 호스트 합의에 반영
+    _quiet_reset()
+    appA.core.players["이팀장B"]["role"] = "mafia"
+    v1 = appA._mafia_kill_candidates()[0]        # B가 마피아가 된 뒤의 후보(B 본인 제외)
+    stubB._my_mafia_mates = [ai_m]
+    stubB._mafia_room_history = []
+    stubB._mafia_room_open()
+    stubB._mafia_room_ent.insert(0, f"{v1} 로 하자")
+    stubB._mafia_room_send()
+    check("목표: 원격 사람 마피아의 대화 결정도 호스트에서 확정 목표가 됨",
+          pump(lambda: bool(appA._mafia_kill_plan) and appA._mafia_kill_plan["target"] == v1
+               and appA._mafia_kill_plan["confirmed"], timeout=15))
+    check("목표: 원격 사람 비밀방에도 '오늘 밤 목표' 확정 안내가 전달됨",
+          pump(lambda: any(w == "📌 오늘 밤 목표" and v1 in t_ for w, t_ in stubB._mafia_room_history), timeout=15))
+    appA._reconcile_mafia_night()
+    check("목표: 원격 사람의 대화 결정대로 살해가 합의됨", appA.core.night_kill_agree() == v1)
+    stubB._mafia_room_close()
+    stubB._my_mafia_mates = None
+    appA.core.players["이팀장B"]["role"] = "citizen"
+    appA.core.night_targets.clear()
+    appA._mafia_kill_plan = None
+
+    # 밤이 끝나면(낮) 늦게 도착한 AI 발언은 버려진다
+    n_before = len(appA._mafia_room_history)
+    appA.core.phase = Phase.DAY
+    appA._mafia_ai_post(ai_pl, "늦은 발언")
+    check("사람↔AI: 밤이 끝난 뒤 도착한 AI 비밀 발언은 무시됨",
+          len(appA._mafia_room_history) == n_before)
+    appA._mafia_room_close()
+    # 이후 시나리오 원복
+    ai_pl.role = None
+    appA.core.phase = Phase.NIGHT
+    for n_, p_ in appA.core.players.items():
+        p_["role"] = "citizen"
+    appA.core.players["이팀장B"]["role"] = "mafia"
+    stubB._my_mafia_mates = None
     with appA.core.lock:
         appA.core.players["이팀장B"]["role"] = "mafia"
         appA.core.phase = Phase.DAY
@@ -408,6 +585,50 @@ try:
     stubB._cast_defense(defendant, True)
     check("⑤ A(호스트)의 core.defense_yes에 B의 실제 찬반 표가 반영됨",
           pump(lambda: appA.core.defense_yes.get("이팀장B") is True, timeout=10))
+
+    # ===================== AI 피고인의 최후 변론이 원격 참가자에게도 전달됨 =====================
+    import queue as _qq
+    appA._defense_ui_q = _qq.Queue()
+    appA._defense_has_spoken = False
+    appA._defense_ui_q.put(("defense", defendant, "변론합니다: 저는 시민이에요 진짜로"))
+    appA._poll_defense_ui_queue()
+    check("변론: 호스트 화면에 AI 피고인의 변론이 표시됨",
+          any("변론합니다" in r.get("text", "") for r in appA.mafia_history))
+    check("변론: 원격 참가자(B) 화면에도 AI 피고인의 변론이 전달됨",
+          pump(lambda: any("변론합니다" in r.get("text", "") for r in stubB.mafia_history), timeout=10))
+    appA._defense_ui_q = None
+
+    # ===================== 원격 사망자의 유령방 → 호스트의 사망 AI가 답장 =====================
+    _gb = tk.Text(rootB)                      # B의 유령방 화면 대역
+    stubB._ghost_list = _gb
+    stubB._ghost_ui_open = True
+    for pl_ in appA.ai.players:
+        pl_.alive, pl_.booted = True, True
+    appA.core.players["이팀장B"]["alive"] = False       # B가 사망(호스트 core 기준)
+    stubB._ghost_ai_reply("아무도 없어?")
+    check("유령방(원격): 사망 AI가 없으면 '대화 상대가 없어요' 안내가 돌아옴",
+          pump(lambda: "대화 상대가 없어요" in _gb.get("1.0", "end"), timeout=10))
+    _gb.delete("1.0", "end")
+    dead_pl = next(p_ for p_ in appA.ai.players if p_.name == ai_names[1])
+    dead_pl.alive = False
+    appA.core.players[dead_pl.name]["alive"] = False
+    stubB._ghost_ai_reply("나 죽었어 ㅠㅠ 뭐해?")
+    check("유령방(원격): 원격 사망자의 말에 호스트의 사망 AI가 답장해 B 화면에 표시됨",
+          pump(lambda: f"👻 {dead_pl.name}:" in _gb.get("1.0", "end"), timeout=15))
+    check("유령방(원격): 산 사람 B가 아니라 사망 상태일 때만 호스트가 중계함",
+          "안내" not in _gb.get("1.0", "end").split(dead_pl.name)[-1])
+    appA.core.players["이팀장B"]["alive"] = True       # 산 사람이 보낸 유령방 말은 무시
+    _gb.delete("1.0", "end")
+    stubB._ghost_ai_reply("살아있는데 보내본다")
+    pump(lambda: False, timeout=2.0)
+    # 화면 텍스트는 앞서 받은 패킷이 재전송으로 다시 찍힐 수 있어 판단 기준으로 부적절 —
+    # 호스트가 이 발언을 처리했다면 원격 대화 기록(_ghost_remote_log)에 남는다.
+    check("유령방(원격): 생존자가 보낸 유령방 발언은 호스트가 AI 답장 없이 무시함",
+          "살아있는데 보내본다" not in chr(10).join(getattr(appA, "_ghost_remote_log", {}).get("이팀장B", [])))
+    dead_pl.alive = True
+    appA.core.players[dead_pl.name]["alive"] = True
+    stubB._ghost_list = None
+    stubB._ghost_ui_open = False
 
     # ===================== 동료 마피아 통보(마피아에게만) =====================
     mate = ai_names[0]
@@ -447,6 +668,8 @@ try:
     with appA.core.lock:
         appA.core.defendant = None
     appA._mafia_disconnected = set()
+    del appA._mafia_poll_disconnects      # 멈춰 둔 감시기를 원래 메서드로 되돌리고
+    appA._mafia_poll_disconnects()         # 다시 가동
 
     try:
         stubB.engine.stop()
@@ -460,6 +683,8 @@ try:
     leak = [t for t in A_sys if "이팀장B" in t and "끊긴 것 같습니다" in t
             and any(r in t for r in ("마피아", "의사", "경찰", "시민"))]
     check("⑥ 끊김/사망 안내가 역할 정보를 노출하지 않음", len(leak) == 0)
+    check("⑥ 끊김 안내가 곧바로 사망 처리하면서 '재접속하면 다시 인식'이라고 모순되게 말하지 않음",
+          not any("재접속하면" in t for t in A_sys))
 
 finally:
     try:
@@ -472,6 +697,11 @@ finally:
         pass
     try:
         appA.engine.stop()
+    except Exception:
+        pass
+    try:
+        if getattr(appA, "_notifier", None) is not None:
+            appA._notifier.close()      # 트레이 아이콘 제거 — 안 하면 종료 후에도 죽은 아이콘이 남는다
     except Exception:
         pass
     try:

@@ -450,6 +450,10 @@ class Notifier:
             if self._shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid)):
                 self._nid = nid
                 self.ok = True
+                # 정상 종료(_quit)를 못 거치고 프로세스가 끝나면(예외 종료 등) 죽은 아이콘이 트레이에
+                # 계속 쌓인다 — 파이썬이 끝날 때라도 반드시 제거한다(close는 여러 번 불려도 안전).
+                import atexit
+                atexit.register(self.close)
                 try:
                     nid.uTimeoutOrVersion = NOTIFYICON_VERSION_4
                     self._shell32.Shell_NotifyIconW(NIM_SETVERSION, ctypes.byref(nid))
