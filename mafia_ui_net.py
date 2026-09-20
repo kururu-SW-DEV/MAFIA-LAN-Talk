@@ -145,20 +145,60 @@ class MafiaNetMixin:
         "mafia_to_ai": "name", "ghost_to_ai": "name",
         "recruit_join": "name", "recruit_leave": "name"}
 
+    def _ident(self):
+        """이름 → 접속 주소(ip, port) 묶음. 새 모집이 시작될 때마다 비운다."""
+        m = getattr(self, "_mafia_ident", None)
+        if m is None:
+            m = self._mafia_ident = {}
+        return m
+
+    def _note_impersonation(self, claimed, key):
+        """이미 다른 접속 주소에 묶인 이름으로 요청이 왔을 때(사칭 또는 주소 변경) 한 번만 알린다."""
+        seen = getattr(self, "_mafia_ident_noted", None)
+        if seen is None:
+            seen = self._mafia_ident_noted = set()
+        if (claimed, key) in seen:
+            return
+        seen.add((claimed, key))
+        try:
+            applog.log("mafia_ident_mismatch",
+                       detail=f"name={claimed} from={key} bound={self._ident().get(claimed)}")
+            self.add_mafia_system(
+                f"⚠ '{claimed}' 이름으로 온 요청이 처음 확인된 접속 주소와 달라 무시했습니다"
+                f"({key[0]}). 다른 PC가 이름을 사칭했거나 그 사람의 접속 주소가 바뀐 경우입니다.")
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
     def _sender_is(self, claimed, sender_name, peer=None):
-        """본문이 주장하는 이름(claimed)이 실제 송신자인지. 표시 이름이 같거나, 그 이름의
-        접속 상대(peer)가 이 패킷을 보낸 상대와 같으면(별칭을 붙여 이름이 달라진 경우) 인정."""
+        """본문이 주장하는 이름(claimed)이 실제 송신자인지.
+
+        패킷 본문의 이름은 보내는 사람이 마음대로 적을 수 있어(엔진도 그대로 읽는다) 그것만 믿으면
+        이름만 바꿔 사칭할 수 있다. 그래서 이름을 '처음 확인된 접속 주소(ip, port)'에 묶고,
+        한번 묶인 이름은 그 주소에서 온 것만 인정한다(표시 이름이 같아도 다른 주소면 거부).
+        처음 보는 이름은 표시 이름이 같거나 그 이름의 접속 상대(peer)가 이 패킷의 송신자와
+        같을 때(별칭으로 이름이 달라진 경우) 인정하고 그 주소에 묶는다."""
         if not claimed:
             return False
-        if claimed == sender_name:
-            return True
-        if peer is not None:
+        if peer is None:
+            return claimed == sender_name      # peer 정보가 없는 호출(단위 테스트 등)은 이름 비교만
+        key = tuple(peer)
+        ident = self._ident()
+        bound = ident.get(claimed)
+        if bound is not None:
+            if bound == key:
+                return True
+            self._note_impersonation(claimed, key)
+            return False
+        ok = claimed == sender_name
+        if not ok:
             try:
-                key = self._mafia_peer_of(claimed)
-                return key is not None and tuple(key) == tuple(peer)
-            except Exception:
-                return False
-        return False
+                pk = self._mafia_peer_of(claimed)
+                ok = pk is not None and tuple(pk) == key
+            except Exception as _swallow_e:
+                applog.swallowed(_swallow_e)
+        if ok:
+            ident[claimed] = key               # 처음 확인된 접속 주소에 이름을 묶는다
+        return ok
 
     def _proto_authorized(self, t, ev, sender_name, peer=None):
         """[MAFIA1] 이벤트의 송신자 검증. 같은 LAN의 누구든 가짜 '게임 종료/역할 통보' 같은
@@ -171,9 +211,12 @@ class MafiaNetMixin:
                 return False            # 방장에게 방장 전용 이벤트가 올 이유가 없다
             if t == "recruit_start":
                 # 모집을 여는 사람은 본인을 방장으로 알려야 하고, 진행 중인 판의 방장은 바꿀 수 없다
+                active = getattr(self, "mafia_active", False)
+                if not active:
+                    self._mafia_ident = {}        # 새 모집 — 이전 판의 이름·주소 묶음을 버린다
                 if not self._sender_is(ev.get("host"), sender_name, peer):
                     return False
-                if getattr(self, "mafia_active", False) and host                         and not self._sender_is(host, sender_name, peer):
+                if active and host and not self._sender_is(host, sender_name, peer):
                     return False
                 return True
             return bool(host) and self._sender_is(host, sender_name, peer)

@@ -592,6 +592,193 @@ for _f in ("mafia_ui.py", "mafia_ai.py", "mafia_config.py", "mafia_core.py", "ma
 check("마피아 모듈에 예외를 조용히 삼키는 'except Exception: pass'가 없음(다시 생기면 실패)", _silent == {})
 
 # ============================================================
+# v1.65 — 밤 행동 역할 검증 / 접속 주소 묶음 / 협박 판정 / 멘션 / 선택 순서 / 최대 인원
+# ============================================================
+# ---- 밤 행동은 요청자의 '실제' 역할과 같은 역할만 받는다(시민이 role="police"를 적어 보내도 무시) ----
+def _night_apply(actor, role, phase=Phase.NIGHT, mutate=None):
+    s = _NightStub()
+    s.core.phase = phase
+    if mutate:
+        mutate(s)
+    notes = []
+    ok = s._night_action_apply(actor, role, "영희", notes.append)
+    return s, ok, notes
+
+
+_s, _ok, _n = _night_apply("사람", "police")
+check("시민이 role=police로 위조한 조사 요청은 거부(조사도 결과 회신도 없음)",
+      _ok is False and _s.core.police_invest == {} and _s.core.police_report is None
+      and any("할 수 없" in t for t in _n) and not any("마피아" in t for t in _n))
+_s, _ok, _n = _night_apply("사람", "doctor")
+check("시민이 role=doctor로 위조한 보호 요청은 거부(의사의 보호 대상을 덮어쓰지 못함)",
+      _ok is False and _s.core.night_saved is None)
+_s, _ok, _n = _night_apply("사람", "mafia")
+check("시민이 role=mafia로 위조한 살해 지정은 거부", _ok is False and _s.core.night_target is None)
+_s, _ok, _n = _night_apply("경찰P", "doctor")
+check("경찰이 의사 행동을 요청하면 거부(자기 역할만 가능)", _ok is False and _s.core.night_saved is None)
+_s, _ok, _n = _night_apply("경찰P", "police")
+check("진짜 경찰의 조사는 정상 처리(결과 회신)",
+      _ok is True and _s.core.police_invest == {"영희": "citizen"} and any("마피아가 아닙니다" in t for t in _n))
+_s, _ok, _n = _night_apply("의사D", "doctor")
+check("진짜 의사의 보호는 정상 처리", _ok is True and _s.core.night_saved == "영희")
+_s, _ok, _n = _night_apply("마피아M", "mafia")
+check("진짜 마피아의 살해 지정은 정상 처리", _ok is True and _s.core.night_target == "영희")
+_s, _ok, _n = _night_apply("경찰P", "police", mutate=lambda s: s.core.players["경찰P"].update(alive=False))
+check("죽은 사람의 밤 행동은 거부", _ok is False and _s.core.police_invest == {})
+_s, _ok, _n = _night_apply("경찰P", "police", phase=Phase.DAY)
+check("밤이 아닐 때의 밤 행동은 거부", _ok is False and _s.core.police_invest == {})
+_s, _ok, _n = _night_apply("경찰P", "citizen")
+check("알 수 없는 역할 값은 거부", _ok is False)
+
+
+class _HostNightStub(_NightStub):
+    def __init__(self):
+        super().__init__()
+        self.engine = SimpleNamespace(name="방장")
+        self.dms = []
+
+    def _mafia_is_host(self):
+        return True
+
+    def _mafia_send_private(self, who, ev_type, **kw):
+        self.dms.append((who, ev_type, kw.get("text", "")))
+
+    def _ghost_dm(self, text):
+        self.dms.append(("방장", "ghost", text))
+
+
+_hs = _HostNightStub()
+_hs._host_receive_night_action("사람", "police", "영희")
+check("호스트 수신 경로: 원격 시민의 위조 조사는 결과 없이 '할 수 없다'는 회신만 감",
+      _hs.core.police_invest == {} and len(_hs.dms) == 1 and "할 수 없" in _hs.dms[0][2])
+
+# ---- 먼저 '고른' 사람의 선택이 팀 결정 (예전엔 먼저 '입장한' 사람의 선택이 항상 이겼다) ----
+_o = _HostNightStub()
+_o.core.players["사람"]["role"] = "mafia"
+_o.core.players["사람2"] = {"role": "mafia", "alive": True, "is_ai": False, "color": "#fff", "addr": None}
+_o.core.players["마피아M"]["role"] = "citizen"
+_o.core.night_targets["사람2"] = "영희"      # 사람2가 먼저 고르고
+_o.core.night_targets["사람"] = "철수"       # 사람이 나중에 고름(마피아 명단 순서는 사람 → 사람2)
+_o._mafia_kill_plan = None
+_o._reconcile_mafia_night()
+check("인간 마피아 둘이 갈리면 입장 순서가 아니라 먼저 고른 사람의 선택이 팀 결정", _o.core.night_target == "영희")
+_o = _HostNightStub()
+_o.core.players["사람"]["role"] = "mafia"
+_o.core.players["사람2"] = {"role": "mafia", "alive": True, "is_ai": False, "color": "#fff", "addr": None}
+_o.core.players["마피아M"]["role"] = "citizen"
+_o.core.night_targets["사람"] = "철수"
+_o.core.night_targets["사람2"] = "영희"
+_o._mafia_kill_plan = None
+_o._reconcile_mafia_night()
+check("반대로 사람이 먼저 고르면 사람의 선택이 팀 결정", _o.core.night_target == "철수")
+
+# ---- 이름을 '접속 주소(ip, port)'에 묶는다 ----
+class _IdStub(_GateStub):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.notes = []
+
+    def add_mafia_system(self, text):
+        self.notes.append(text)
+
+
+_KA, _KB, _KX = ("10.0.0.1", 50707), ("10.0.0.2", 50707), ("10.0.0.9", 50707)
+_c = _IdStub(host=None, active=False)
+check("모집 시작을 보낸 접속 주소에 방장 이름이 묶임",
+      _c._proto_authorized("recruit_start", {"host": "김재무A"}, "김재무A", _KA))
+_c._recruiter_host = "김재무A"
+check("방장 이름으로 온 방장 전용 이벤트는 그 접속 주소에서 온 것만 통과",
+      _c._proto_authorized("end", {}, "김재무A", _KA))
+check("표시 이름을 방장으로 바꿔도 다른 접속 주소에서 온 방장 전용 이벤트는 거부(이름만 믿지 않음)",
+      not _c._proto_authorized("end", {}, "김재무A", _KX)
+      and not _c._proto_authorized("hdm", {"target": "이팀장B", "role": "citizen"}, "김재무A", _KX))
+for _ in range(3):
+    _c._proto_authorized("end", {}, "김재무A", _KX)
+check("사칭으로 보이는 요청은 사용자에게 한 번만 알림", len([t for t in _c.notes if "김재무A" in t]) == 1)
+_c.mafia_active = True
+check("진행 중인 판에서는 다른 주소가 모집 시작으로 방장을 가로챌 수 없음",
+      not _c._proto_authorized("recruit_start", {"host": "해커"}, "해커", _KX)
+      and _c._proto_authorized("end", {}, "김재무A", _KA))
+_c.mafia_active = False
+check("새 모집이 시작되면 이전 판의 이름·주소 묶음을 버림(재시작으로 주소가 바뀐 방장도 다음 판에는 가능)",
+      _c._proto_authorized("recruit_start", {"host": "김재무A"}, "김재무A", _KX)
+      and _c._proto_authorized("end", {}, "김재무A", _KX))
+
+_h = _IdStub(me="김재무A", host="김재무A", is_host=True)
+check("호스트: 참가 신청을 보낸 접속 주소에 참가자 이름이 묶임",
+      _h._proto_authorized("recruit_join", {"name": "이팀장B"}, "이팀장B", _KB))
+check("호스트: 참가자 본인 주소에서 온 밤 행동·투표는 통과",
+      _h._proto_authorized("night_action", {"actor": "이팀장B"}, "이팀장B", _KB)
+      and _h._proto_authorized("vote_cast", {"voter": "이팀장B"}, "이팀장B", _KB))
+check("호스트: 참가자 이름을 적어도 다른 주소에서 온 밤 행동·투표는 거부(참가자 사칭)",
+      not _h._proto_authorized("night_action", {"actor": "이팀장B"}, "이팀장B", _KX)
+      and not _h._proto_authorized("vote_cast", {"voter": "이팀장B"}, "이팀장B", _KX))
+check("호스트: 참가자가 방장 이름을 적어 보낸 요청은 거부",
+      not _h._proto_authorized("night_action", {"actor": "김재무A"}, "이팀장B", _KB))
+
+# ---- 협박 판정: 마피아 게임의 정상 발언은 협박이 아니다 ----
+class _ToneStub(MafiaUIMixin):
+    def __init__(self, hist):
+        self.engine = SimpleNamespace(name="나")
+        self.mafia_history = hist
+
+
+def _rec(text, who=None):
+    return {"kind": "text", "text": text, "label": who or "나", "mine": who is None}
+
+
+check("협박 키워드에 게임 용어('처형하', '죽인', '죽일')가 없음",
+      not any(k in mafia_config.THREAT_KEYWORDS for k in ("처형하", "죽인", "죽일")))
+check("'철수 처형하자'·'누가 죽인 걸까'는 협박이 아님(중립)",
+      _ToneStub([_rec("철수 처형하자"), _rec("누가 죽인 걸까")])._barometer_last_user_tone()[0] == "neutral")
+check("진짜 협박('협박')은 여전히 감지", _ToneStub([_rec("이거 협박이다")])._barometer_last_user_tone()[0] == "threat")
+_t = _ToneStub([_rec("협박이다", "이팀장B"), _rec("안녕")])
+check("협박 판정은 발화자별 — 원격 사람의 협박은 그 사람에게만 적용(호스트 사용자는 중립)",
+      _t._barometer_last_user_tone("이팀장B")[0] == "threat" and _t._barometer_last_user_tone()[0] == "neutral")
+_t = _ToneStub([_rec("협박이다", "이팀장B")] + [_rec("다른말%d" % i, "이팀장B") for i in range(5)])
+check("한 사람의 최근 발화 5개 안에서만 판정(오래된 협박은 사라짐)", _t._barometer_last_user_tone("이팀장B")[0] == "neutral")
+
+# ---- 이름 멘션: 이름 전체가 들어 있을 때만 지목 ----
+class _MentionStub(MafiaUIMixin):
+    def __init__(self, names):
+        self.ai = SimpleNamespace(players=[_FakePl(n, "citizen") for n in names])
+
+
+_m = _MentionStub(["반장", "미나", "제이", "루카"])
+
+
+def _mentioned(text):
+    hits = _m._detect_mention(text)
+    return sorted(p.name for p in hits) if hits else []
+
+
+check("첫 글자만 겹치는 일반 단어는 지목이 아님('반대합니다'·'미안해'·'제가 할게')",
+      _mentioned("반대합니다") == [] and _mentioned("미안해") == [] and _mentioned("제가 할게") == [])
+check("이름을 부르면 지목('반장 어떻게 생각해', '미나야 안녕', '@루카')",
+      _mentioned("반장 어떻게 생각해") == ["반장"] and _mentioned("미나야 안녕") == ["미나"]
+      and _mentioned("@루카 너는?") == ["루카"])
+check("여러 AI 이름이 함께 나오면 모두 지목", _mentioned("반장이랑 미나는 어때") == ["미나", "반장"])
+
+# ---- 사람이 최대 인원을 채우면 시작을 거절 ----
+class _LaunchStub(MafiaUIMixin):
+    def __init__(self, n_humans):
+        self.engine = SimpleNamespace(name="방장")
+        self._recruited_humans = ["방장"] + ["p%d" % i for i in range(n_humans - 1)]
+        self.core = GameCore("t")
+        self.msgs, self.btn = [], []
+        self.mafia_start_btn = SimpleNamespace(configure=lambda **k: self.btn.append(k))
+
+    def add_mafia_system(self, t):
+        self.msgs.append(t)
+
+
+_ls = _LaunchStub(10)
+_ls._launch_game_with_recruits()
+check("사람 10명(최대 인원)이면 AI 자리가 없어 시작을 거절하고 안내",
+      any("너무 많" in t for t in _ls.msgs) and _ls.core.players == {} and not getattr(_ls, "mafia_active", False)
+      and _ls.btn and "모집" in _ls.btn[-1].get("text", ""))
+
+# ============================================================
 # mafia_ui 분할 구조 무결성 — 믹스인 모듈로 나눈 뒤에도 깨지지 않게 지킨다
 # ============================================================
 import builtins as _bi

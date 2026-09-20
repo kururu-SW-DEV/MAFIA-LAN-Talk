@@ -244,6 +244,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         self._launch_game_with_recruits()
 
     def _start_recruitment(self):
+        self._mafia_ident = {}      # 새 모집 — 이전 판의 이름·접속 주소 묶음을 버린다
         self._recruiting = True
         me = getattr(self.engine, "name", None) or "방장"
         self._recruiter_host = me
@@ -344,6 +345,15 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         if me not in humans:
             humans.insert(0, me)
 
+        if len(humans) >= MAX_PLAYERS:
+            # 사람이 최대 인원(10명)을 채우면 AI 자리(최소 1명)가 없다 — 예전엔 검사가 없어
+            # 11명 이상이어도 그냥 시작돼 10인 직업표가 조용히 적용됐다.
+            self.add_mafia_system(
+                f"⚠ 게임 시작 실패 — 참가자가 너무 많습니다(사람 {len(humans)}명). "
+                f"사람은 최대 {MAX_PLAYERS - 1}명까지이고 AI가 최소 1명 함께합니다.")
+            self.mafia_start_btn.configure(text="📢 참가자 모집", state="normal")
+            return
+
         with self.core.lock:
             self.core.lobby_reset()
             # 오직 참가 신청한 실제 인간들만 join! (강제 납치 제거)
@@ -352,7 +362,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
 
             ai_count = max(1, getattr(self, "mafia_ai_count", 4))
             need = max(ai_count, MIN_PLAYERS - len(self.core.players))
-            need = min(need, len(ALL_PERSONAS))
+            need = min(need, len(ALL_PERSONAS), MAX_PLAYERS - len(humans))   # 총원 최대 10명
             chosen_personas = self._pick_ai_personas(need)
             self._session_ai_personas = chosen_personas
             for p in chosen_personas:

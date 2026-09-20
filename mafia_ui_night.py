@@ -376,7 +376,21 @@ class MafiaNightMixin:
     def _night_action_apply(self, actor, role, target, notify):
         """호스트 전용 — 밤 행동(살해/조사/치료)을 실제 권위 core에 반영한다.
         notify(text)로 결과를 알린다(로컬 클릭이면 _ghost_dm, 원격 참가자면
-        개인 쪽지 콜백). 반영 성공 여부를 반환."""
+        개인 쪽지 콜백). 반영 성공 여부를 반환.
+
+        요청자(actor)가 주장하는 역할(role)이 권위 core의 실제 역할과 같고, 살아 있고, 지금이
+        밤일 때만 받는다. 예전에는 role을 그대로 믿어서, 시민이 자기 이름으로 role="police"를
+        보내면 조사 결과를 받고 role="doctor"면 의사의 보호 대상을 덮어쓸 수 있었다."""
+        info = self.core.players.get(actor) or {}
+        if (role not in ("mafia", "police", "doctor") or info.get("role") != role
+                or not info.get("alive", False) or self.core.phase != Phase.NIGHT):
+            try:
+                applog.log("mafia_night_action_rejected", detail=f"actor={actor} claimed={role} "
+                           f"real={info.get('role')} alive={info.get('alive')} phase={self.core.phase}")
+            except Exception as _swallow_e:
+                applog.swallowed(_swallow_e)
+            notify("⚠ 지금은 그 밤 행동을 할 수 없습니다")
+            return False
         if role == "mafia":
             if self.core.set_night_target(target):
                 self.core.mafia_night_vote(actor, target)
@@ -458,8 +472,10 @@ class MafiaNightMixin:
                 return
             valid = lambda t: bool(t) and core.players.get(t, {}).get("alive") and t not in mafias
             humans = [n for n in mafias if not core.players[n].get("is_ai")]
-            human_picks = [core.night_targets[h] for h in humans
-                           if h in core.night_targets and valid(core.night_targets[h])]
+            # '먼저 고른' 순서는 night_targets에 처음 기록된 순서(=실제로 먼저 고른 순서)다.
+            # 예전에는 마피아 명단(입장 순서)을 돌아서, 늘 먼저 입장한 사람의 선택이 이겼다.
+            human_picks = [t for m, t in core.night_targets.items()
+                           if m in humans and valid(t)]
             plan = getattr(self, "_mafia_kill_plan", None)
             plan_t = plan["target"] if plan else None
             if human_picks:

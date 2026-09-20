@@ -304,19 +304,23 @@ class MafiaVoteMixin:
             # v1.30 — 유저 발화 톤 반영(낮 본투표): 유저가 최근 발화에서 협박하면
             # AI들이 유저(협박자)를 지목할 확률 상승(협박 불이익). 설득이면 소폭 되려 감소.
             if target is not None:
-                tone, _tone_txt = self._barometer_last_user_tone()
-                me_u = getattr(self.engine, "name", None)
+                # 사람 참가자 전원에게 똑같이 적용한다(호스트든 원격이든).
                 alive = self.core.alive_players() if getattr(self, "core", None) else []
-                if tone == "threat" and me_u and me_u in alive:
-                    # 유저 협박 → AI가 유저를 지목할 확률 +25%p (반감/공포 반영)
-                    if _r.random() < 0.25:
-                        target = me_u
-                elif tone == "persuade" and me_u and me_u in alive:
-                    # 설득 → 유저 지목 확률 소폭 감소(-10%p)
-                    if _r.random() < 0.08:
-                        pass
-                    elif _r.random() < 0.10 and target == me_u:
-                        target = random_mod.choice([n for n in alive if n != me_u])
+                humans = [n for n in alive
+                          if not (self.core.players.get(n) or {}).get("is_ai") and n != ag.name]
+                _r.shuffle(humans)
+                for h in humans:
+                    tone, _tone_txt = self._barometer_last_user_tone(h)
+                    if tone == "threat":
+                        # 협박 → AI가 그 사람을 지목할 확률 +25%p (반감/공포 반영)
+                        if _r.random() < 0.25:
+                            target = h
+                            break
+                    elif tone == "persuade" and target == h and _r.random() < 0.10:
+                        # 설득 → 그 사람을 지목할 확률 소폭 감소(-10%p)
+                        others = [n for n in alive if n not in (h, ag.name)]
+                        if others:
+                            target = random_mod.choice(others)
 
             def _apply():
                 if not self.mafia_active or not getattr(self, "core", None):
@@ -813,14 +817,21 @@ class MafiaVoteMixin:
         if getattr(self, "_defense_ui_q", None) is not None and getattr(self.core, "defendant", None):
             self.root.after(300, self._poll_defense_ui_queue)
 
-    def _barometer_last_user_tone(self):
-        """v1.26 — 유저 최근 발화 톤 측정: 협박/설득/중립. 변론 토대 반영."""
+    def _barometer_last_user_tone(self, speaker=None):
+        """v1.26 — 사람 참가자의 최근 발화 톤 측정: 협박/설득/중립. 변론 토대 반영.
+        speaker가 없으면 이 PC의 사용자, 있으면 그 사람(원격 참가자 포함)의 발화를 본다 —
+        예전에는 호스트 사용자만 봐서 협박 불이익이 원격 사람에게는 적용되지 않았다."""
         me = getattr(self.engine, "name", None)
+        who = speaker or me
         vals = []
-        for rec in getattr(self, "mafia_history", [])[-5:]:   # v1.26 — 최근 5개만
-            # v1.26 — 유저 발화는 mine=True('나')로 저장 — 라벨 조건 동시 인정
-            if rec.get("kind") == "text" and (rec.get("mine") or rec.get("label") == me or rec.get("label") == "나"):
+        for rec in getattr(self, "mafia_history", [])[-30:]:   # 최근 발화들 중 그 사람의 최근 5개만
+            if rec.get("kind") != "text":
+                continue
+            # v1.26 — 내 발화는 mine=True('나')로 저장 — 라벨 조건 동시 인정
+            own = (who == me) and (rec.get("mine") or rec.get("label") == "나")
+            if own or rec.get("label") == who:
                 vals.append(str(rec.get("text", "")))
+        vals = vals[-5:]
         joined = " ".join(vals)
         threat_kw = mafia_config.THREAT_KEYWORDS
         pers_kw = ("근거", "논리", "증거", "생각", "아니", "의심")
@@ -854,9 +865,8 @@ class MafiaVoteMixin:
                 else:
                     p_y = 0.55
                 # v1.26/v1.34 — 유저 톤 반영: 피고인이 유저 본인일 때만 발화 톤 보정 적용
-                me_u = getattr(self.engine, "name", None)
-                if me_u and defendant == me_u:
-                    tone, _t = self._barometer_last_user_tone()
+                if defendant and not (c.players.get(defendant) or {}).get("is_ai"):
+                    tone, _t = self._barometer_last_user_tone(defendant)
                     if tone == "threat":
                         p_y = min(0.95, p_y + 0.35)
                     elif tone == "persuade":

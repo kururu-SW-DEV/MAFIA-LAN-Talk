@@ -607,6 +607,13 @@ try:
           appA.mafia_active and appA.core.phase != Phase.END and appA.core.winner is None)
     check("송신자 검증(실제 네트워크): 호스트 이름으로 위조한 밤 행동을 호스트가 무시함",
           a_nm not in appA.core.night_targets)
+    # ---- 역할 검증(실제 네트워크): 시민 B가 '자기 이름'으로 role=police/doctor를 위조해 보낸다 ----
+    _pi_before, _ns_before = dict(appA.core.police_invest), appA.core.night_saved
+    stubB._mafia_send_private(a_nm, "night_action", actor="이팀장B", role="police", target=_cand_forge)
+    stubB._mafia_send_private(a_nm, "night_action", actor="이팀장B", role="doctor", target=_cand_forge)
+    pump(lambda: False, timeout=2.0)
+    check("역할 검증(실제 네트워크): 시민 B가 role=police/doctor로 위조한 밤 행동을 호스트가 무시함",
+          dict(appA.core.police_invest) == _pi_before and appA.core.night_saved == _ns_before)
     appA.core.day_no += 1                         # 남은 대체 타이머/결과가 이후 시나리오에 섞이지 않게
     del appA.NIGHT_MAFIA_LLM_MS
     appA.core.police_invest.clear(); appA.core.night_saved = None; appA.core.night_targets.clear()

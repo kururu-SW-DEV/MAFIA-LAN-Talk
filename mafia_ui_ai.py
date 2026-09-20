@@ -184,7 +184,10 @@ class MafiaAIChatMixin:
             if not pl.alive or not pl.booted:
                 continue
             nm = pl.name
-            if nm in text or (nm and nm[:-1] + "아") in text or (nm and nm[:-1] in text):
+            # 이름 전체가 들어 있을 때만 지목으로 본다('미나야'·'@미나'·'미나가' 모두 포함).
+            # 예전엔 이름의 첫 글자만('반대'→반장, '미안'→미나) 있어도 지목으로 봐서, 지목된 AI가
+            # 다구리 상한을 우회해 반드시 대답했다.
+            if nm and nm in text:
                 hits.append(pl)
         return hits or None
 
