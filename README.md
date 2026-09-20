@@ -78,7 +78,6 @@ AI 참가자의 발언은 OpenAI 호환 LLM 서버를 호출합니다. 서버 �
 | `emoji_render.py` | 컬러 이모지·알약 버튼 렌더링 |
 | `sounds/` | 연출 효과음 |
 | `tests/` | 회귀 테스트 (`python tests/test_multiplayer_sync.py` 등). 같은 폴더에서 동시에 두 개를 돌리면 포트가 겹쳐 실패하고, 한글 콘솔 오류는 `PYTHONIOENCODING=utf-8`로 피합니다 |
-| `docs/개발기록/` | 버전별 개발 기록 (마피아는 v1.00~, 인덱스는 `docs/개발기록/README.md`) |
 
 ---
 
