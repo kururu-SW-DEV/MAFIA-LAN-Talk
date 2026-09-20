@@ -81,3 +81,47 @@ def swallowed(exc):
             detail=f"{os.path.basename(site[0])}:{site[1]} {fr.f_code.co_name}")
     except Exception:
         pass
+
+
+def start_hang_watchdog(root, path, stall_sec=10.0):
+    """화면이 멈추면(메인 스레드가 stall_sec초 넘게 응답 없음) 모든 스레드의 호출 스택을 path에 남긴다.
+    '응답 없음' 강제 종료는 파이썬 예외가 없어 debug.log에 아무것도 안 남기 때문에, 어디서 멈췄는지
+    알 방법이 이것뿐이다. 프로세스가 네이티브 오류로 죽을 때의 스택도 같은 파일에 남긴다."""
+    import faulthandler
+    import threading
+    import time
+    try:
+        f = open(path, "a", buffering=1, encoding="utf-8")
+        faulthandler.enable(file=f, all_threads=True)
+    except Exception as exc:
+        swallowed(exc)
+        return None
+    beat = {"t": time.time(), "dumped": False}
+
+    def _tick():
+        beat["t"] = time.time()
+        beat["dumped"] = False
+        try:
+            root.after(1000, _tick)
+        except Exception as exc:
+            swallowed(exc)
+
+    def _watch():
+        while True:
+            time.sleep(2.0)
+            if time.time() - beat["t"] > stall_sec and not beat["dumped"]:
+                beat["dumped"] = True
+                try:
+                    f.write(f"\n===== {datetime.datetime.now():%Y-%m-%d %H:%M:%S} 화면 멈춤 "
+                            f"({time.time() - beat['t']:.0f}초 무응답) — 전체 스레드 스택 =====\n")
+                    faulthandler.dump_traceback(file=f, all_threads=True)
+                    log("ui_hang", detail=f"{time.time() - beat['t']:.0f}s → {path}")
+                except Exception as exc:
+                    swallowed(exc)
+
+    try:
+        root.after(1000, _tick)
+        threading.Thread(target=_watch, daemon=True, name="hang-watchdog").start()
+    except Exception as exc:
+        swallowed(exc)
+    return f

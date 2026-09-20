@@ -50,7 +50,13 @@ def main():
     args = ap.parse_args()
     extra = [s for s in (args.peers or "").split(",") if s.strip()] or None
     root = tk.Tk()
-    App(root, args, extra)
+    app = App(root, args, extra)
+    try:
+        import os
+        import applog
+        applog.start_hang_watchdog(root, os.path.join(app.datadir, "hang_trace.log"))
+    except Exception:
+        pass
     root.mainloop()
 
 
