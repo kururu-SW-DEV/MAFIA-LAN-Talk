@@ -32,7 +32,9 @@ venv/
 tests/tmp/
 tests/tmp_*/
 tests/smoke/
-scratch/*.png
+scratch/
+# 기반이 된 랜톡 원본 소스 압축본(원본은 README의 원본 저장소 링크에서 받을 수 있다)
+docs/LAN-Talk-serverfree-*.zip
 
 # ── 백업/임시 파일 ──────────────────────────────────────────
 *.bak
