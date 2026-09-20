@@ -7,6 +7,7 @@
 - Hermes 서브에이전트(AI 플레이어): `hermes chat -Q --yolo ...` 원큐 실행,
   `--resume <sid>`로 같은 세션을 재사용해 AI가 이전 대화·자기 역할 배정을 기억한다.
 """
+import applog
 import os
 import json
 
@@ -29,7 +30,7 @@ HERMES_CMD_TIMEOUT = 90       # 서브에이전트 1회 호출 타임아웃(초)
 HERMES_REPLY_LANG = \
     "대사는 반드시 한국어로 짧고 자연스럽게(1~2문장). 마크다운·이모지·코드블록 없이 순수 대사만."
 
-# ── 페르소나(이름/성격/말버릇). 게임 시작 시 이 순서대로 AI 자리에 배정 ──
+# ── 페르소나(이름/성격/말버릇). 아래 5인은 인격 풀(ALL_PERSONAS)의 일부이며, 게임 시작 시 풀에서 무작위로 뽑힌다 ──
 AI_PERSONAS = [
     {"name": "루카", "persona": "다정하고 편안한 친구형. 반말과 존댓말을 자연스럽게 섞고, "
                               "누가 의심받으면 '에이 설마~' 하며 먼저 감싸준다. 추리는 "
@@ -54,8 +55,8 @@ AI_PERSONAS = [
 ]
 # ============================================================
 # 인격 풀 20종 확장 (2026-09-17 문서 기획 보강 — 문서 #1~#20 병합)
-# 기존 AI_PERSONAS + 20종을 합쳐 '인격 풀'(ALL_PERSONAS)을 만들고, 게임에서는 AI 수만큼
-# 앞에서부터 순서대로 쓴다(기본 5인이 항상 먼저 — 무작위 배정이 아니다).
+# 기존 AI_PERSONAS + 20종을 합쳐 '인격 풀'(ALL_PERSONAS)을 만들고, 게임을 시작할 때마다
+# AI 수만큼 무작위로 뽑아 쓴다(mafia_ui._pick_ai_personas — 매판 캐스팅이 달라진다).
 # talk/att/aggr/freq 파라미터는 문서 2절 "행동 파라미터" 그대로:
 #   freq = 발언 참여 확률(%)  att = 공격성(%)
 # ============================================================
@@ -131,8 +132,10 @@ ALL_PERSONAS = AI_PERSONAS + [
 # ============================================================
 # 게임 룰 상수
 # ============================================================
-MIN_PLAYERS = 4               # 인간 + AI 합산 최소 인원
-MIN_PLAYERS_CORE = 4          # GameCore.start_game 하드 리미트(같은 값)
+MIN_PLAYERS = 5               # 인간 + AI 합산 최소 인원 — 4인은 시민이 1명뿐이라(마피아1·의사·경찰·시민1)
+                              # 낮 처형을 한 번만 틀려도 곧바로 마피아 승리라 너무 불리했다. 5인부터는
+                              # 시민 쪽이 낮 투표에서 두 번 기회를 얻는다. 모자란 자리는 AI가 자동으로 채운다.
+MIN_PLAYERS_CORE = 5          # GameCore.start_game 하드 리미트(같은 값)
 MAX_PLAYERS = 10
 DAY_CYCLE_SECONDS = 150       # 낮(토론+투표) 기본 길이. 투표 완료 시 즉시 종료.
                               # v1.56 — 역할 공개 연출·최후변론(60초)·찬반(30초)까지
@@ -143,13 +146,11 @@ LLM_TTL_CACHE = 12 * 3600     # LLM 프롬프트 결과 캐시 TTL
 PLAYER_CONTEXT_TURNS = 12     # AI 플레이어가 기억할 최근 대화 개수
 
 # 역할 배분 (시작 인원 = total)
-# 4~6명: 마피아1   7~10명: 마피아2   4~10명: 의사·경찰 각 1명 포함
+# 5~6명: 마피아1   7~10명: 마피아2   5~10명: 의사·경찰 각 1명 포함
 ROLE_TABLE = {
-    # v1.56 — 3명 항목 제거: MIN_PLAYERS_CORE=4라 실제로는 절대 쓰이지 않는
-    # 죽은 설정이었다(최소 인원 미만은 GameCore.start_game이 먼저 막음).
-    # 4~7명에도 경찰 1명 배치 — 4인 게임에서 시민 정보력이 없어 마피아에게
-    # 유리하던 문제와, 7명만 경찰이 없던 불일치를 함께 해소.
-    4:  {"mafia": 1, "doctor": 1, "police": 1},
+    # 4명 이하 항목은 없다: MIN_PLAYERS_CORE=5라 최소 인원 미만은 GameCore.start_game이 먼저 막는다
+    # (v1.56에 3명 항목을 죽은 설정이라 제거한 것과 같은 이유 — 4인 게임은 v1.64에서 폐지).
+    # 5~7명에도 경찰 1명 배치 — 시민 쪽 정보력 확보 및 7명만 경찰이 없던 불일치 해소.
     5:  {"mafia": 1, "doctor": 1, "police": 1},
     6:  {"mafia": 1, "doctor": 1, "police": 1},
     7:  {"mafia": 2, "doctor": 1, "police": 1},
@@ -215,8 +216,8 @@ def load_overrides():
         for k in ("base_url", "model", "api_key"):
             if d.get(k):
                 RUNTIME_OVERRIDES[k] = d[k]
-    except Exception:
-        pass
+    except Exception as _swallow_e:
+        applog.swallowed(_swallow_e)
     return RUNTIME_OVERRIDES
 
 def save_overrides():

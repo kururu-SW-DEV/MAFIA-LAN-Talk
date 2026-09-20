@@ -34,9 +34,12 @@ MODS = ["lan_messenger.py", "constants.py", "netutils.py", "canvas_utils.py",
         "crypto_layer.py", "applog.py", "winapi.py", "engine.py", "widgets.py",
         "stickers.py", "dnd_handler.py", "chat_search.py", "chat_renderer.py",
         "dialogs.py", "mafia_config.py", "mafia_core.py", "mafia_ai.py",
-        "mafia_net.py", "mafia_ui.py", "colors_compat.py", "app.py"]
+        "mafia_net.py", "mafia_ui.py", "mafia_ui_common.py", "mafia_ui_view.py",
+        "mafia_ui_net.py", "mafia_ui_secret.py", "mafia_ui_night.py", "mafia_ui_vote.py",
+        "mafia_ui_ai.py", "colors_compat.py", "app.py"]
 HIDDEN = ["engine", "crypto_layer", "applog", "mafia_config", "mafia_core",
-          "mafia_ai", "mafia_net", "mafia_ui", "colors_compat"]
+          "mafia_ai", "mafia_net", "mafia_ui", "mafia_ui_common", "mafia_ui_view", "mafia_ui_net",
+          "mafia_ui_secret", "mafia_ui_night", "mafia_ui_vote", "mafia_ui_ai", "colors_compat"]
 EXCLUDE = ["numpy"]          # 코드가 쓰지 않는데 Pillow 훅이 끌어오는 무거운 패키지
 SMOKE_SECONDS = 8            # exe가 이 시간 뒤에도 살아있어야 통과
 

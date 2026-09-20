@@ -53,8 +53,8 @@ def _llm_call(messages, max_tokens=350, timeout=45):
     if meta.get("finish") == "length":
         try:
             applog.log("mafia_llm_truncated", detail=f"max_tokens={max_tokens} len={len(text or '')} → 재요청")
-        except Exception:
-            pass
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
         meta2 = {}
         text2 = _llm_call_once(messages, max_tokens * 4, timeout, meta2)
         if text2:
@@ -90,8 +90,8 @@ def _llm_call_once(messages, max_tokens, timeout, meta, _reasoning=True):
         # 서버 URL 기본값이 없다 — 게임 설정 또는 MAFIA_LLM_BASE_URL로 지정해야 한다.
         try:
             applog.log("mafia_llm_call", exc=None, detail="LLM 서버 URL이 설정되지 않음")
-        except Exception:
-            pass
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
         return None
     # v1.61 — 호출 경로/헤더를 서버마다 다른 관례에 맞춘다.
     #  · User-Agent: Cloudflare 등 앞단이 파이썬 기본 UA("Python-urllib")를 403(코드 1010)으로
@@ -143,11 +143,11 @@ def _llm_call_once(messages, max_tokens, timeout, meta, _reasoning=True):
             try:
                 err_body = last_err.read().decode("utf-8", "replace")[:200]
                 detail += " body=" + (err_body.replace(key, "***") if key else err_body)
-            except Exception:
-                pass
+            except Exception as _swallow_e:
+                applog.swallowed(_swallow_e)
         applog.log("mafia_llm_call", exc=last_err, detail=detail)
-    except Exception:
-        pass
+    except Exception as _swallow_e:
+        applog.swallowed(_swallow_e)
     return None
 
 

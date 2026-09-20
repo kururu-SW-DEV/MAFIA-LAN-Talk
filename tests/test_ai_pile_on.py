@@ -72,6 +72,7 @@ AIS = [("루카", 70), ("미나", 60), ("제이", 20), ("레오", 85)]
 # 1) 발언당 대답 수 상한 + 무반응 비율 + 발언 확률 가중
 s = Stub(AIS)
 import mafia_ui
+import mafia_ui_ai
 mafia_ui.threading.Thread = lambda *a, **k: type("T", (), {"start": lambda self: None})()   # 사회자 LLM 스레드 차단
 N = 2000
 per_call = []
@@ -87,10 +88,10 @@ check(f"1) 발언 확률이 높은 AI가 더 자주 답함 (레오 {counts['레�
       counts["레오"] > counts["제이"])
 s2 = Stub(AIS)
 before = len(s2.said_one)
-mafia_ui.AI_REACT_SKIP_PROB = 0.0
+mafia_ui_ai.AI_REACT_SKIP_PROB = 0.0
 s2._trigger_ai_reactions("플레이어 '나'의 발언: \"안녕\"", max_replies=2)
 check("1) max_replies=2면 서로 다른 AI 2명", len(set(s2.said_one[before:])) == 2)
-mafia_ui.AI_REACT_SKIP_PROB = 0.15
+mafia_ui_ai.AI_REACT_SKIP_PROB = 0.15
 
 # 2) 게임 상황 반응은 전원 대상(기존 동작 유지)
 s3 = Stub(AIS)

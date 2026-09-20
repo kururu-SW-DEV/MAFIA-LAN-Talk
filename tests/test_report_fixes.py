@@ -514,5 +514,141 @@ check("LLM 답 파싱: '선택 이름' / 문장 속 이름 / 후보에 없는 �
       and MafiaUIMixin._night_ai_parse("아무도 모르겠어", ["영희", "철수"]) is None
       and MafiaUIMixin._night_ai_parse("", ["영희"]) is None)
 
+# ============================================================
+# 인격 풀 무작위 뽑기 / 최소 5인 / 삼킨 예외 기록
+# ============================================================
+_picks = [tuple(p["name"] for p in MafiaUIMixin._pick_ai_personas(4)) for _ in range(40)]
+_one = MafiaUIMixin._pick_ai_personas(5)
+check("AI 인격 뽑기: 요청한 수만큼, 중복 없이, 인격 풀에서 뽑음",
+      len(_one) == 5 and len({p["name"] for p in _one}) == 5
+      and all(p in mafia_config.ALL_PERSONAS for p in _one))
+check("AI 인격 뽑기: 매판 같은 캐스팅이 아님(40번 뽑아 서로 다른 조합이 여러 개)", len(set(_picks)) > 5)
+check("AI 인격 뽑기: 풀보다 많이 요청하면 풀 크기로 제한, 0이면 빈 목록",
+      len(MafiaUIMixin._pick_ai_personas(999)) == len(mafia_config.ALL_PERSONAS)
+      and MafiaUIMixin._pick_ai_personas(0) == [])
+check("AI 인격 뽑기: 성격별 발언 빈도·공격성이 그대로 딸려 감(원본 딕셔너리 보존)",
+      all(("freq" in p) for p in MafiaUIMixin._pick_ai_personas(len(mafia_config.ALL_PERSONAS))
+          if p["name"] in {x["name"] for x in mafia_config.PERSONAS20}))
+
+check("최소 인원 5명(4인 게임 폐지)", mafia_config.MIN_PLAYERS == 5 and mafia_config.MIN_PLAYERS_CORE == 5
+      and min(mafia_config.ROLE_TABLE) == 5)
+_g = GameCore("t")
+for _i in range(4):
+    _g.join("p%d" % _i, False)
+check("4명이면 게임 시작이 거절됨", _g.start_game()[0] is False)
+_g.join("p4", False)
+_ok5, _assigned5 = _g.start_game()
+check("5명이면 게임이 시작됨", _ok5 is True and len(_assigned5) == 5)
+from mafia_core import alloc_roles
+check("5~10명 모두 의사 1·경찰 1, 마피아는 5~6명 1 / 7~10명 2",
+      all(sorted(alloc_roles(n)).count("doctor") == 1 and sorted(alloc_roles(n)).count("police") == 1
+          and sorted(alloc_roles(n)).count("mafia") == (1 if n <= 6 else 2)
+          and len(alloc_roles(n)) == n for n in range(5, 11)))
+
+# ---- 삼킨 예외를 잃지 않는다 ----
+import importlib
+import tempfile
+import applog
+importlib.reload(applog)          # 위에서 로그 함수를 가짜로 바꿔 둔 것을 원상 복구
+_logdir = tempfile.mkdtemp(prefix="applog_test_")
+applog.init(_logdir)
+
+
+def _boom_a():
+    try:
+        raise ValueError("첫 번째")
+    except Exception as _e:
+        applog.swallowed(_e)
+
+
+def _boom_b():
+    try:
+        raise KeyError("두 번째")
+    except Exception as _e:
+        applog.swallowed(_e)
+
+
+for _ in range(5):
+    _boom_a()                     # 같은 위치·같은 예외는 한 번만 기록
+_boom_b()
+_lines = [l for l in open(os.path.join(_logdir, "debug.log"), encoding="utf-8").read().splitlines()
+          if "| swallowed |" in l]
+check("삼킨 예외 기록: 같은 위치를 5번 삼켜도 로그는 1줄(반복 경로에서 로그가 넘치지 않음)",
+      sum("_boom_a" in l for l in _lines) == 1)
+check("삼킨 예외 기록: 다른 위치는 따로 기록되고 파일:줄·함수·예외 종류가 남음",
+      any("_boom_b" in l and "test_report_fixes.py:" in l and "KeyError" in l for l in _lines))
+import shutil as _sh
+_sh.rmtree(_logdir, ignore_errors=True)
+
+import ast as _ast
+_silent = {}
+for _f in ("mafia_ui.py", "mafia_ai.py", "mafia_config.py", "mafia_core.py", "mafia_net.py"):
+    _tree = _ast.parse(open(os.path.join(ROOT, _f), encoding="utf-8").read())
+    _n = sum(1 for x in _ast.walk(_tree) if isinstance(x, _ast.ExceptHandler)
+             and isinstance(x.type, _ast.Name) and x.type.id == "Exception"
+             and len(x.body) == 1 and isinstance(x.body[0], _ast.Pass))
+    if _n:
+        _silent[_f] = _n
+check("마피아 모듈에 예외를 조용히 삼키는 'except Exception: pass'가 없음(다시 생기면 실패)", _silent == {})
+
+# ============================================================
+# mafia_ui 분할 구조 무결성 — 믹스인 모듈로 나눈 뒤에도 깨지지 않게 지킨다
+# ============================================================
+import builtins as _bi
+import dis as _dis
+import inspect as _inspect
+import types as _types
+
+_UI_MODS = ["mafia_ui_view", "mafia_ui_net", "mafia_ui_secret", "mafia_ui_night",
+            "mafia_ui_vote", "mafia_ui_ai", "mafia_ui"]
+
+
+def _code_objs(code):
+    yield code
+    for c in code.co_consts:
+        if isinstance(c, _types.CodeType):
+            yield from _code_objs(c)
+
+
+def _undefined_globals(modname):
+    mod = importlib.import_module(modname)
+    bad = set()
+    for cname, cls in _inspect.getmembers(mod, _inspect.isclass):
+        if cls.__module__ != modname:
+            continue
+        for attr, val in vars(cls).items():
+            fn = val.__func__ if isinstance(val, (staticmethod, classmethod)) else val
+            if not isinstance(fn, _types.FunctionType):
+                continue
+            for co in _code_objs(fn.__code__):
+                for ins in _dis.get_instructions(co):
+                    if ins.opname in ("LOAD_GLOBAL", "LOAD_NAME") and ins.argval not in vars(mod) \
+                            and not hasattr(_bi, ins.argval):
+                        bad.add(f"{cname}.{attr}:{ins.argval}")
+    return sorted(bad)
+
+
+for _m in _UI_MODS:
+    _bad = _undefined_globals(_m)
+    check(f"{_m}: 메서드가 쓰는 전역 이름이 모두 정의돼 있음(분할 후 이름 누락 방지)", _bad == [])
+    if _bad:
+        print("     ", _bad[:5])
+
+from mafia_ui import MafiaUIMixin as _Composed
+_owners = {}
+for _k in _Composed.__mro__:
+    if _k is object:
+        continue
+    for _a in vars(_k):
+        if not _a.startswith("__"):
+            _owners.setdefault(_a, []).append(_k.__name__)
+_dupes = {a: o for a, o in _owners.items() if len(o) > 1}
+check("MafiaUIMixin: 같은 메서드가 두 믹스인에 중복 정의돼 있지 않음(MRO 순서로 덮어써지는 사고 방지)", _dupes == {})
+check("MafiaUIMixin은 6개 기능 믹스인을 합친 구조", len(_Composed.__mro__) == 8)
+_biggest = max(
+    (open(os.path.join(ROOT, _f + ".py"), encoding="utf-8").read().count(chr(10)), _f)
+    for _f in _UI_MODS + ["mafia_ui_common"])
+check(f"mafia_ui 계열 파일이 한 덩어리로 다시 커지지 않음(최대 {_biggest[1]} {_biggest[0]}줄 < 1500줄)", _biggest[0] < 1500)
+
 print("REPORT FIXES PASSED" if ok_all else "REPORT FIXES FAILED")
 sys.exit(0 if ok_all else 1)

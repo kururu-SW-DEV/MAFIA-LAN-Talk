@@ -60,3 +60,24 @@ def log(tag, exc=None, detail=""):
                 f.write(line)
     except Exception:
         pass  # 로깅 자체가 앱을 죽이는 일은 절대 없어야 한다
+
+
+_swallowed_seen = set()
+
+
+def swallowed(exc):
+    """`except Exception: pass`로 조용히 삼키던 예외를 기록한다(동작은 그대로, 흔적만 남긴다).
+    예외를 삼킨 위치(파일:줄·함수)를 자동으로 붙이고, 같은 위치·같은 예외 종류는 한 번만 남겨
+    화면 갱신 같은 반복 경로에서도 로그가 넘치지 않게 한다. 기록 실패는 무시한다."""
+    try:
+        import sys
+        fr = sys._getframe(1)
+        site = (fr.f_code.co_filename, fr.f_lineno, type(exc).__name__)
+        with _lock:
+            if site in _swallowed_seen:
+                return
+            _swallowed_seen.add(site)
+        log("swallowed", exc=exc,
+            detail=f"{os.path.basename(site[0])}:{site[1]} {fr.f_code.co_name}")
+    except Exception:
+        pass
