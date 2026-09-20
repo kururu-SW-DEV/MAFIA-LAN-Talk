@@ -203,6 +203,45 @@ def _ensure_overrides_file():
     return _OVERRIDES_FILE
 
 
+def _dpapi_blob(data, protect):
+    """Windows DPAPI(현재 사용자 계정에 묶임)로 바이트를 암/복호화. 실패하면 None."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class BLOB(ctypes.Structure):
+            _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+        buf = ctypes.create_string_buffer(data, len(data))
+        src = BLOB(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
+        out = BLOB()
+        fn = ctypes.windll.crypt32.CryptProtectData if protect else ctypes.windll.crypt32.CryptUnprotectData
+        if not fn(ctypes.byref(src), None, None, None, None, 0, ctypes.byref(out)):
+            return None
+        try:
+            return ctypes.string_at(out.pbData, out.cbData)
+        finally:
+            ctypes.windll.kernel32.LocalFree(out.pbData)
+    except Exception as _swallow_e:
+        applog.swallowed(_swallow_e)
+        return None
+
+
+def _dpapi_protect(text):
+    import base64
+    raw = _dpapi_blob(text.encode("utf-8"), True)
+    return base64.b64encode(raw).decode("ascii") if raw else None
+
+
+def _dpapi_unprotect(b64):
+    import base64
+    try:
+        raw = _dpapi_blob(base64.b64decode(b64), False)
+        return raw.decode("utf-8") if raw else None
+    except Exception as _swallow_e:
+        applog.swallowed(_swallow_e)
+        return None
+
+
 def load_overrides():
     """저장된 설정 파일 읽기 — RUNTIME_OVERRIDES에 병합(base_url/model/api_key)."""
     if RUNTIME_OVERRIDES:
@@ -216,6 +255,10 @@ def load_overrides():
         for k in ("base_url", "model", "api_key"):
             if d.get(k):
                 RUNTIME_OVERRIDES[k] = d[k]
+        if d.get("api_key_dpapi"):
+            key = _dpapi_unprotect(d["api_key_dpapi"])
+            if key:
+                RUNTIME_OVERRIDES["api_key"] = key
     except Exception as _swallow_e:
         applog.swallowed(_swallow_e)
     return RUNTIME_OVERRIDES
@@ -228,7 +271,14 @@ def save_overrides():
     try:
         os.makedirs(os.path.dirname(_OVERRIDES_FILE), exist_ok=True)
         with open(_OVERRIDES_FILE, "w", encoding="utf-8") as f:
-            json.dump(RUNTIME_OVERRIDES, f, ensure_ascii=False, indent=1)
+            data = dict(RUNTIME_OVERRIDES)
+            # API 키는 평문으로 두지 않는다 — 이 Windows 계정에서만 풀 수 있게 암호화(폴더를
+            # 통째로 복사·배포해도 키가 새지 않는다). 암호화가 안 되는 환경이면 예전처럼 저장.
+            enc = _dpapi_protect(data["api_key"]) if data.get("api_key") else None
+            if enc:
+                data.pop("api_key", None)
+                data["api_key_dpapi"] = enc
+            json.dump(data, f, ensure_ascii=False, indent=1)
         return True
     except Exception:
         return False

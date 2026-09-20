@@ -325,7 +325,7 @@ class MafiaSecretMixin:
                           "넣어 제안하고 의견을 물어보세요. 친구랑 카톡하듯 편하게 1문장. 후보 이름은 위 목록에서만.")
             reply = None
             for _ in range(3):
-                reply = pl.say(prompt)
+                reply = pl.say(prompt, secret=True)
                 if reply:
                     break
                 _t.sleep(1.5)
@@ -472,7 +472,7 @@ class MafiaSecretMixin:
                         f"입장했습니다. 여기엔 생자 없음(직업 공개 자유). 당신 직업: {role_str}. "
                         f"함께 있는 유령: {', '.join(others) or '없음'}. "
                         f"돌아가서 실제 게임 채팅에 절대 겹치지 않게, 이 방에서만 "
-                        f"사망자의 속닥임이나 부탁, 마지막 충고 2문장 이내로 해보세요.")
+                        f"사망자의 속닥임이나 부탁, 마지막 충고 2문장 이내로 해보세요.", secret=True)
                     txt2 = (txt or "").strip()
                     if txt2:
                         t2 = split_chat_tags(clean_llm_dialect(txt2))
@@ -637,7 +637,7 @@ class MafiaSecretMixin:
                     f"되물어서 대화가 이어지게. 게임 결과를 가르치듯 설명하지 마세요.")
                 reply = None
                 for _ in range(3):                      # 다른 발화 중(busy)이면 잠깐 뒤 재시도
-                    reply = p_.say(prompt)
+                    reply = p_.say(prompt, secret=True)
                     if reply:
                         break
                     _t.sleep(1.5)

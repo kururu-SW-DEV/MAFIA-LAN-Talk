@@ -226,6 +226,25 @@ def clean_llm_dialect(text):
     return (text or "").strip()
 
 
+# 공개 채팅에 나가면 안 되는 비밀 정보 표현(마피아 비밀 대화·동료 언급). 프롬프트 지시만으로는
+# 모델이 어길 수 있어 출력 쪽에서도 문장 단위로 걸러낸다.
+_LEAK_PATTERNS = (
+    r"비밀\s*대화", r"마피아\s*(?:끼리|방|채팅|동료|팀|친구)", r"(?:동료|같은|우리|저희)\s*마피아",
+    r"마피아\s*(?:인|라고)\s*(?:저|제가|나는|난)", r"(?:저|제가|나는|난)\s*마피아",
+    r"내\s*역할|제\s*역할|나의\s*역할", r"(?:살해|죽일)\s*(?:대상|계획|타깃)",
+)
+
+
+def strip_secret_leaks(text, role=None):
+    """문장 단위로 비밀 누설 표현이 든 문장을 제거한다. 마피아 AI에만 적용(시민 AI가
+    '저 마피아 아니에요'라고 말하는 것은 정상이라 건드리지 않는다). 다 지워지면 빈 문자열."""
+    if not text or role != "mafia":
+        return text
+    parts = re.split(r"(?<=[.!?~ㅋㅠ…])\s+|[\r\n]+", text)
+    kept = [p for p in parts if p.strip() and not any(re.search(pt, p) for pt in _LEAK_PATTERNS)]
+    return " ".join(kept).strip()
+
+
 # ============================================================
 # 2) AI 플레이어 개체
 # ============================================================
@@ -260,7 +279,7 @@ class PlayerAgent:
         return self.booted
 
     # ---------- 한 턴 발언(~2초) ----------
-    def say(self, prompt):
+    def say(self, prompt, secret=False):
         """발언 지시를 주고 대사 문자열 반환. 실패 시 None."""
         if not self.booted or self.busy:
             return None
@@ -298,6 +317,10 @@ class PlayerAgent:
             text = clean_llm_dialect(text)
             if re.match(r"(?i)^\s*(thinking\s*:|thought\s*:|1\.)", text):
                 return None
+            if not secret:
+                text = strip_secret_leaks(text, self.role)
+                if not text:
+                    return None
             self.last_say_ms = int((time.time() - t0) * 1000)
             return text
         finally:

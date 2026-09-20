@@ -129,6 +129,9 @@ class GameCore:
         with self.lock:
             cnt = {}
             for t in self.votes.values():
+                # 사망자·빈 표·명단에 없는 이름은 집계하지 않는다(재투표 중 접속이 끊겨 죽은 사람이 최다득표가 되는 것 방지)
+                if not t or not self.players.get(t, {}).get("alive"):
+                    continue
                 cnt[t] = cnt.get(t, 0) + 1
             max_v = max(cnt.values()) if cnt else 0
             if not cnt or max_v == 0:
@@ -236,6 +239,8 @@ class GameCore:
                 return False
             if not target or target == mafia_name or not self.players.get(target, {}).get("alive"):
                 return False
+            if self.players[target]["role"] == "mafia":
+                return False            # 마피아 동료 지목 불가 (set_night_target과 같은 기준)
             # 다시 고르면 맨 뒤로 보낸다 — night_targets의 순서가 '각자의 마지막 선택이 빨랐던 순서'가
             # 되어, 인간 마피아가 갈릴 때 "가장 먼저 최종 선택을 끝낸 사람"의 선택이 팀 결정이 된다.
             # (dict는 기존 키를 덮어써도 원래 자리를 지켜서, A가 1초에 고르고 20초에 바꿔도 A가 계속 앞이었다.)

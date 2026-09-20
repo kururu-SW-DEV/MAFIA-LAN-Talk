@@ -14,9 +14,8 @@ build/
 dist/
 *.exe
 *.pyz
-# PyInstaller가 자동 생성하는 spec만 무시하고, 직접 관리하는 빌드 설정은 추적한다
+# spec은 build_exe.py가 build/에 생성한다(저장소에서 추적하지 않음)
 *.spec
-!MAFIA.spec
 
 # ── Python 캐시/도구 ─────────────────────────────────────────
 __pycache__/

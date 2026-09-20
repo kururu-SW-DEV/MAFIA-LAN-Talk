@@ -5,7 +5,7 @@
 2) 모듈 컴파일 체크 (mafia_* 포함)
 3) PyInstaller onefile/noconsole 빌드 (엔트리: lan_messenger.py)
    - 쓰지 않는 numpy는 제외(Pillow 훅이 끌어와 exe가 20MB → 31MB로 불어난다)
-   - 생성 spec은 build/ 로 보낸다(그냥 두면 저장소가 추적하는 MAFIA.spec을 덮어쓴다)
+   - 생성 spec은 build/ 로 보낸다(빌드 정의는 이 스크립트 하나뿐 — 예전 MAFIA.spec은 onedir/docs 번들이라 실제 산출물과 달라 삭제)
 4) 스모크: 임시 데이터 폴더로 exe를 띄워 살아있는지 확인 → 종료(트레이 잔상 정리)
 5) SHA-256 출력 (릴리즈 노트용)
 

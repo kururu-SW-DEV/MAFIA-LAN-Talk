@@ -105,7 +105,7 @@ class MafiaAIChatMixin:
             if getattr(self, "ai", None):
                 self.ai.observe_all(self.engine.name, text)
             # 마피아/의사/경찰 역할자가 아직 신청 안 했으면 안내
-            if my_role == "mafia" and not self.core.night_target:
+            if my_role == "mafia" and me not in self.core.night_targets and not self.core.night_target:
                 self.add_mafia_system("(안내) 마피아는 '살해 이름'으로 밤 행동을 알려야 합니다.")
             elif my_role == "doctor" and not self.core.night_saved:
                 self.add_mafia_system("(안내) 의사는 '구조 이름'으로 밤 행동을 알려야 합니다.")
@@ -113,8 +113,8 @@ class MafiaAIChatMixin:
                 self.add_mafia_system("(안내) 경찰은 '조사 이름'으로 밤 행동을 알려야 합니다.")
             return
         if self.core.phase == Phase.DAY:
-            m = re.match(r"^(?:투표|지목|vote)\s+([^\s]+)$", text.strip()) or \
-                re.match(r"^@([^\s]+)\s*$", text.strip())
+            # '@이름'만 친 것은 멘션(AI 호출)이지 투표가 아니다 — 투표는 '투표 이름'으로만
+            m = re.match(r"^(?:투표|지목|vote)\s+([^\s]+)$", text.strip())
             if m:
                 target = m.group(1).strip()
                 me = self.engine.name

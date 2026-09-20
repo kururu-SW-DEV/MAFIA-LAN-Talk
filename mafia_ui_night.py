@@ -366,12 +366,19 @@ class MafiaNightMixin:
             # v1.61 — 복수 인간 플레이: 클라이언트는 자기 로컬 core만 봐서는
             # 유효성(동료 마피아 여부 등, 남의 역할은 비밀이라 모름)을 정확히
             # 검증할 수 없다 — 호스트에게 보내고 결과는 개인 쪽지로 받는다.
-            # 낙관적으로 패널은 바로 닫고(호스트가 거절하면 이번 밤은 행동을
-            # 못 한 것으로 남을 뿐 — 다음 밤에 다시 시도 가능), 접수 안내만
-            # 즉시 로컬에 띄운다.
+            # 패널은 닫지 않는다 — 호스트가 거절(의사 연속 보호 등)하면 호스트 본인처럼
+            # 바로 다른 대상을 다시 고를 수 있어야 하기 때문. 접수 결과 쪽지(hdm)가 오면
+            # _close_night_panel_on_ack가 닫고, 안 오면 카운트다운이 닫는다.
             self._ghost_dm("⏳ 밤 행동을 호스트에게 전달했습니다 — 처리 결과는 곧 알려드립니다.")
             self._mafia_send_to_host("night_action", actor=me, role=role, target=name)
-            self._mafia_overlay_close()
+
+    def _close_night_panel_on_ack(self, text):
+        """원격 참가자 — 호스트의 밤 행동 회신이 '접수'면 선택 패널을 닫는다(⚠ 거절이면 유지)."""
+        try:
+            if (text or "").startswith(("🔪", "💉", "🕵")) and getattr(self, "_mafia_overlay", None):
+                self._mafia_overlay_close()
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
 
     def _night_action_apply(self, actor, role, target, notify):
         """호스트 전용 — 밤 행동(살해/조사/치료)을 실제 권위 core에 반영한다.

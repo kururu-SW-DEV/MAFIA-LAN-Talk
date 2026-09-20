@@ -410,10 +410,15 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             else:
                 # v1.61 — 마피아에게만 동료 명단을 함께 보낸다(다른 직업에겐 절대 안 감)
                 mates = [n for n, r in assigned.items() if r == "mafia" and n != pname]                     if prole == "mafia" else None
+                # 참가자별 비밀 토큰 — 이후 투표·밤 행동에 실어 보내야 호스트가 받는다(같은 PC·같은
+                # 공유기 뒤에서 이름·포트만 흉내 낸 위조 패킷을 막는다). 개인 전송으로만 전달된다.
+                import secrets as _secrets
+                tok = _secrets.token_hex(8)
+                self.__dict__.setdefault("_mafia_tokens", {})[pname] = tok
                 if mates:
-                    self._mafia_send_private(pname, "hdm", target=pname, text=msg, role=prole, mates=mates)
+                    self._mafia_send_private(pname, "hdm", target=pname, text=msg, role=prole, mates=mates, tok=tok)
                 else:
-                    self._mafia_send_private(pname, "hdm", target=pname, text=msg, role=prole)
+                    self._mafia_send_private(pname, "hdm", target=pname, text=msg, role=prole, tok=tok)
         self.add_mafia_system("(AI 참가자가 순차 입장합니다…)")
         threading.Thread(target=self._host_then_bootstrap_bg, daemon=True).start()
 

@@ -161,7 +161,13 @@ class MafiaNetMixin:
         me = getattr(self.engine, "name", None)
         if not host or host == me:
             return
+        tok = getattr(self, "_my_tok", None)
+        if tok and ev_type in self._TOKEN_EVENTS:
+            kw["tok"] = tok
         self._mafia_send_private(host, ev_type, **kw)
+
+    # 토큰이 있어야 하는 참가자→호스트 이벤트(투표·찬반·밤 행동)
+    _TOKEN_EVENTS = frozenset({"vote_cast", "defense_vote_cast", "night_action"})
 
     # 방장(호스트)만 보낼 수 있는 이벤트 — 다른 사람이 보내면 폐기한다.
     _HOST_ONLY_EVENTS = frozenset({
@@ -187,6 +193,8 @@ class MafiaNetMixin:
         """새 모집 — 이전 판의 이름·접속 주소 묶음과 사칭 안내 기록을 함께 비운다."""
         self._mafia_ident = {}
         self._mafia_ident_noted = set()
+        self._mafia_tokens = {}      # 호스트: 참가자 이름 → 비밀 토큰
+        self._my_tok = None          # 참가자: 호스트가 개인 쪽지로 준 토큰
 
     _IDENT_NOTICE_MAX = 5      # 한 모집 동안 사용자에게 알리는 사칭 안내의 최대 횟수
 
@@ -294,6 +302,14 @@ class MafiaNetMixin:
                 except Exception as _swallow_e:
                     applog.swallowed(_swallow_e)
                 return False
+            if t in self._TOKEN_EVENTS and self._mafia_is_host():
+                want = getattr(self, "_mafia_tokens", {}).get(ev.get(field))
+                if want:
+                    import hmac
+                    got = ev.get("tok")
+                    if not isinstance(got, str) or not hmac.compare_digest(got, want):
+                        self._note_impersonation(ev.get(field), peer or ("?",))
+                        return False
             return self._sender_is(ev.get(field), sender_name, peer)
         return True
 
@@ -318,6 +334,24 @@ class MafiaNetMixin:
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
             return False
+        # 참가 신청하지 않은 사람에게는 게임 진행 화면(시작·밤 연출·투표 팝업)을 띄우지 않는다.
+        if not self._mafia_is_host():
+            if t == "start":
+                me_n = getattr(self.engine, "name", None)
+                names = [(e.get("name") if isinstance(e, dict) else e) for e in (ev.get("players") or [])]
+                self._in_game = (not names) or (me_n in names)     # 구버전(명단 없음)은 참가로 간주
+                if not self._in_game:
+                    self._recruiting = False
+                    for w in ("mafia_join_btn", "mafia_cancel_recruit_btn"):
+                        if hasattr(self, w):
+                            getattr(self, w).pack_forget()
+                    return True
+            elif t == "recruit_start":
+                self._in_game = True
+            elif (t in ("night", "day", "death", "tally", "vote", "vote_open", "revote_open",
+                        "defense_vote_open", "defense_start", "verdict", "end")
+                  and not getattr(self, "_in_game", True)):
+                return True
         if t == "hsay":
             self.add_mafia_bubble(ev.get("text", ""), ev.get("host", "🖥 사회자"))
         elif t == "asay":
@@ -364,6 +398,10 @@ class MafiaNetMixin:
             if ev.get("target") == me:
                 msg_txt = ev.get("text", "")
                 self.add_mafia_host_dm(msg_txt)
+                if ev.get("tok") and not self._mafia_is_host():
+                    self._my_tok = ev.get("tok")
+                if not self._mafia_is_host():
+                    self._close_night_panel_on_ack(msg_txt)
                 role = ev.get("role")
                 if not role:
                     for r_key, r_kr in [("mafia", "마피아"), ("doctor", "의사"), ("police", "경찰"), ("citizen", "시민")]:

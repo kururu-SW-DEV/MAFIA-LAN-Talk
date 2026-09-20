@@ -1137,9 +1137,7 @@ class MafiaVoteMixin:
                 except Exception:
                     txt = None
             if not txt:
-                persona = getattr(pl, "persona", "") or "박 진하"
-                txt = (f"이건 억울한 처형이에요. 저는 마피아가 아닙니다. "
-                       f"이렇게 조용해야 되는 말은 안 나온다고 봐요. 다시 한번 생각해 주세요.")
+                txt = "이건 억울한 처형이에요. 저는 마피아가 아닙니다. 다시 한번 생각해 주세요."
 
             def _enqueue():
                 if is_first and getattr(self, "_defense_has_spoken", False):
