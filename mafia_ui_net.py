@@ -129,9 +129,8 @@ class MafiaNetMixin:
         if hasattr(self, "mafia_start_btn"):
             self.mafia_start_btn.configure(text="📢 참가자 모집", bg="#b91c1c",
                                            activebackground="#7f1d1d", state="normal")
-        if hasattr(self, "mafia_join_btn"):
-            self.mafia_join_btn.pack_forget()
         self.refresh_mafia_phase_label()
+        self._mafia_pack_lobby_buttons()
 
     def _client_start_day_countdown(self):
         """v1.61 — 원격 참가자도 낮 남은 시간을 볼 수 있게 표시 전용 카운트다운을
@@ -383,7 +382,9 @@ class MafiaNetMixin:
             elif t == "recruit_start":
                 self._in_game = True
             elif (t in ("night", "day", "death", "tally", "vote", "vote_open", "revote_open",
-                        "defense_vote_open", "defense_start", "verdict", "end")
+                        "defense_vote_open", "defense_start", "verdict", "end",
+                        # 사회자·AI·참가자의 게임 중 대화도 참가하지 않은 사람에게는 보이면 안 된다
+                        "hsay", "asay", "sys", "user_say", "ghost_say", "mafia_say")
                   and not getattr(self, "_in_game", True)):
                 return True
         if t == "hsay":
@@ -663,6 +664,9 @@ class MafiaNetMixin:
                     self.add_mafia_system(f"🙋 '{pname}' 님이 참가 신청했습니다! (현재 {len(self._recruited_humans)}명)")
                     self.mafia_start_btn.config(text=f"🎮 게임 시작 (인간 {len(self._recruited_humans)}명)")
                     self._mafia_broadcast("recruit_update", host=me, players=self._recruited_humans)
+                if pname and pname in self._recruited_humans:
+                    # 모집 알림(recruit_start)을 놓친 신청자도 방장·명단·버튼 상태를 알 수 있게 개인 쪽지로 다시 보낸다
+                    self._mafia_send_private(pname, "recruit_start", host=me, players=self._recruited_humans)
         elif t == "recruit_leave":
             pname = ev.get("name")
             me = getattr(self.engine, "name", None)
@@ -688,13 +692,12 @@ class MafiaNetMixin:
             self._recruited_humans = []
             self._my_joined = False
             self._recruiter_host = None
-            if hasattr(self, "mafia_join_btn"):
-                self.mafia_join_btn.pack_forget()
             if hasattr(self, "mafia_cancel_recruit_btn"):
                 self.mafia_cancel_recruit_btn.pack_forget()
             if hasattr(self, "mafia_start_btn"):
                 self.mafia_start_btn.pack(side="right", padx=(10, 6), pady=8)
                 self.mafia_start_btn.config(text="📢 참가자 모집", bg="#b91c1c", activebackground="#7f1d1d", state="normal")
+            self._mafia_pack_lobby_buttons()
             self.mafia_phase_lbl.config(text="")
             self.add_mafia_system("📢 방장이 참가자 모집을 취소했습니다.")
         elif t == "lobby_chat":

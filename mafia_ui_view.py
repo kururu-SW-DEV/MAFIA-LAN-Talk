@@ -558,8 +558,7 @@ class MafiaViewMixin:
             self.mafia_start_btn.pack(side="right", padx=(10, 6), pady=8)
             if hasattr(self, "mafia_cancel_recruit_btn"):
                 self.mafia_cancel_recruit_btn.pack_forget()
-            if hasattr(self, "mafia_join_btn"):
-                self.mafia_join_btn.pack_forget()
+            self._mafia_pack_lobby_buttons()      # 로비: [참가 신청]을 [참가자 모집] 왼쪽에 항상 표시
         self.mafia_bar.pack(fill="x", before=self.chat_wrap)
         self._refresh_mafia_roster()
         self.entry.configure(state="normal", font=FONT_MSG)

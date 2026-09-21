@@ -499,7 +499,8 @@ class ChatRendererMixin:
         w = self._chat_width()
         top = self._chat_y
         iw, ih = img.width(), img.height()
-        ix = MARGIN_SIDE if mine else PEER_BUBBLE_X  # v6.48: 내 메시지도 좌측 정렬 통일
+        # 내가 보낸 사진은 텍스트 말풍선·스티커처럼 오른쪽, 상대 것은 왼쪽(아바타 옆)
+        ix = (w - MARGIN_SIDE - iw - 3) if mine else PEER_BUBBLE_X
         iid = self.chat.create_image(ix, top, image=img, anchor="nw")
         self._push_chat_image(img)  # GC 방지
         pad = 3
@@ -549,7 +550,8 @@ class ChatRendererMixin:
         sb = self.chat.bbox(sub_tid)
         text_h = (nb[3] - nb[1]) + 4 + (sb[3] - sb[1])
         card_h = max(52, text_h + 2 * pad)
-        cx1 = MARGIN_SIDE if mine else PEER_BUBBLE_X  # v6.48: 내 메시지도 좌측 정렬 통일
+        # 내가 보낸 파일 카드도 오른쪽 정렬(상대 것은 왼쪽)
+        cx1 = (w - MARGIN_SIDE - card_w) if mine else PEER_BUBBLE_X
         cx2 = cx1 + card_w
         cy1, cy2 = top, top + card_h
         rid = round_rect(self.chat, cx1, cy1, cx2, cy2, r=BUBBLE_RADIUS,

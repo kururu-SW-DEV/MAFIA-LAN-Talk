@@ -255,6 +255,8 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             text="🎮 게임 시작 (인간 1명)",
             bg="#16a34a", activebackground="#15803d"
         )
+        if hasattr(self, "mafia_join_btn"):
+            self.mafia_join_btn.pack_forget()
         if hasattr(self, "mafia_cancel_recruit_btn"):
             self.mafia_cancel_recruit_btn.pack(side="right", padx=(6, 6), pady=8)
         self.mafia_phase_lbl.config(text="📢 참가자 모집 중…")
@@ -282,10 +284,48 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         self.mafia_phase_lbl.config(text="")
         self.add_mafia_system("📢 마피아 게임 참가자 모집이 취소되었습니다.")
         self._mafia_broadcast("recruit_cancel", host=me)
+        self._mafia_pack_lobby_buttons()
+
+    def _mafia_pack_lobby_buttons(self):
+        """로비(모집 전) 상태의 게임바 버튼 배치: [참가 신청][참가자 모집]. 참가 신청 버튼은 방장의
+        모집 알림을 못 받았어도 누를 수 있게 로비에서 항상 보인다(진행 중인 판·모집 중인 방장에게는 숨김)."""
+        try:
+            start = getattr(self, "mafia_start_btn", None)
+            join = getattr(self, "mafia_join_btn", None)
+            if start is None or join is None:
+                return
+            join.pack_forget()
+            if getattr(self, "mafia_active", False) or getattr(self, "_recruiting", False):
+                return
+            start.pack_forget()
+            start.pack(side="right", padx=(10, 6), pady=8)
+            join.config(text="🙋 참가 신청", bg="#059669", activebackground="#047857")
+            join.pack(side="right", padx=(6, 0), pady=8)
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
+    def _request_join_without_notice(self, me):
+        """방장의 모집 알림(recruit_start)을 받지 못한 채 [참가 신청]을 눌렀을 때 — 접속 중인 모두에게
+        신청을 보낸다. 모집 중인 방장이 있으면 명단에 넣고 개인 쪽지로 모집 상태를 돌려준다."""
+        eng = getattr(self, "engine", None)
+        try:
+            with eng.plock:
+                n_peers = len(eng.peers)
+        except Exception:
+            n_peers = 0
+        if n_peers == 0:
+            self.add_mafia_system("⚠ 접속 중인 상대가 없습니다 — 방장과 같은 네트워크에 있는지, 좌측 목록에 방장이 보이는지 확인하세요.")
+            return
+        self._mafia_broadcast("recruit_join", name=me)
+        self.add_mafia_system("🙋 참가 신청을 보냈습니다. 방장이 모집 중이면 곧 명단에 추가되고 안내가 옵니다. "
+                              "응답이 없으면 방장이 아직 [참가자 모집]을 누르지 않은 것입니다.")
 
     def mafia_toggle_join_clicked(self):
         me = getattr(self.engine, "name", None)
-        if not me or not getattr(self, "_recruiting", False):
+        if not me:
+            return
+        if not getattr(self, "_recruiting", False):
+            self._request_join_without_notice(me)
             return
         if not getattr(self, "_my_joined", False):
             self._my_joined = True
@@ -497,9 +537,8 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         self.mafia_start_btn.configure(text="📢 참가자 모집", bg="#b91c1c", activebackground="#7f1d1d", state="normal")
         if hasattr(self, "mafia_cancel_recruit_btn"):
             self.mafia_cancel_recruit_btn.pack_forget()
-        if hasattr(self, "mafia_join_btn"):
-            self.mafia_join_btn.pack_forget()
         self.refresh_mafia_phase_label()
+        self._mafia_pack_lobby_buttons()
 
     def mafia_shutdown(self):
         try:
