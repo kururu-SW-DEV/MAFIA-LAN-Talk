@@ -347,6 +347,12 @@ class MafiaVoteMixin:
                         final_target = random_mod.choice(claimants)   # 마피아 AI: 경찰을 자처한 사람에게 표를 모은다
                     else:
                         final_target = self._pile_on_redirect(ag.name, target)
+                    if getattr(ag, "role", None) == "doctor" and hasattr(ag, "public_police_claims"):
+                        # 의사 AI는 경찰을 자처한 사람(진짜일 수 있음)에게는 투표하지 않는다
+                        if final_target in ag.public_police_claims() and random_mod.random() < 0.8:
+                            others = [n for n in self.core.alive_players() if n not in (ag.name, final_target)]
+                            if others:
+                                final_target = random_mod.choice(others)
                     self.core.cast_vote(ag.name, final_target)
                     _pd, _pt = self._vote_progress_counts()
                     self.add_mafia_system(f"🗳 {ag.name}(AI)님 투표 완료 (익명 개표) · 진행률 {_pd}/{_pt}")

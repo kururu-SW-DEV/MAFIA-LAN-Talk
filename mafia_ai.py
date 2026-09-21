@@ -266,7 +266,8 @@ class PlayerAgent:
         self.lock = threading.Lock()
         self.intel = {}            # 경찰 AI가 밤 조사로 확인한 사실: 이름 -> "mafia" | "citizen" (기억 창과 무관하게 유지)
         self.core_ref = None       # 생존·일차 확인용(호스트가 assign_roles에서 넣는다)
-        self.claims_fn = None      # 마피아 AI용: 공개적으로 "나 경찰이다"라고 밝힌 생존자 목록을 돌려주는 함수
+        self.claims_fn = None      # 공개적으로 "나 경찰이다"라고 밝힌 생존자 목록을 돌려주는 함수(마피아·의사 AI가 쓴다)
+        self.doctor_log = []       # 의사 AI의 밤 기록: [(밤 번호, 보호 대상, 결과 문장)] — 기억 창과 무관하게 유지
 
     # ---------- 경찰 AI의 조사 정보 ----------
     def add_intel(self, target, result):
@@ -287,14 +288,40 @@ class PlayerAgent:
             return []
         return [n for n, r in self.intel.items() if r == "mafia" and n != self.name and self._alive(n)]
 
-    def police_claimants(self):
-        """(마피아 AI) 채팅에서 스스로 경찰이라고 밝혔고 아직 살아 있는 사람(나·동료 마피아 제외)."""
-        if self.role != "mafia" or self.claims_fn is None:
+    def public_police_claims(self):
+        """채팅에서 스스로 경찰이라고 밝혔고 아직 살아 있는 사람(나 제외). 누구나 볼 수 있는 공개 정보다."""
+        if self.claims_fn is None:
             return []
         try:
             return [n for n in self.claims_fn() if n != self.name]
         except Exception:
             return []
+
+    def police_claimants(self):
+        """(마피아 AI) 경찰을 자처한 생존자 — 표적 후보(동료 마피아는 호스트의 claims_fn이 이미 뺀다)."""
+        return self.public_police_claims() if self.role == "mafia" else []
+
+    # ---------- 의사 AI의 밤 기록 ----------
+    def add_doctor_result(self, night_no, target, outcome):
+        """의사 AI가 어젯밤 누구를 보호했고 어떻게 됐는지 영구 기록한다(최근 5건 유지)."""
+        if self.role == "doctor" and target:
+            self.doctor_log.append((night_no, target, outcome))
+            del self.doctor_log[:-5]
+
+    def _doctor_intel_prompt(self):
+        if self.role != "doctor":
+            return ""
+        claims = self.public_police_claims()
+        if not self.doctor_log and not claims:
+            return ""
+        lines = ["[의사의 비밀 정보 — 내가 아는 사실]"]
+        for n, t, out in self.doctor_log:
+            lines.append(f"  · {n}일차 밤: {t}님을 보호했고 {out}")
+        if claims:
+            lines.append(f"  · {', '.join(claims)}이(가) 채팅에서 '나는 경찰'이라고 밝혔습니다. 진짜 경찰이면 마피아가 가장 먼저 노립니다.")
+        lines.append("  - 마피아에게 노려졌다가 내가 살린 사람이나 경찰을 자처한 사람은 시민 쪽 핵심일 수 있으니 낮에도 감싸 주고(투표로 몰지 말고), 밤엔 계속 지켜 주세요.")
+        lines.append("  - 내가 의사라는 사실과 누구를 보호했는지는 채팅에 절대 쓰지 마세요(밝히면 마피아의 표적이 됩니다). 감싸는 이유는 '왠지 믿음이 간다' 식으로 자연스럽게.")
+        return chr(10).join(lines) + chr(10)
 
     def _mafia_intel_prompt(self):
         cl = self.police_claimants()
@@ -356,7 +383,7 @@ class PlayerAgent:
                 f"당신은 마피아 게임 참가자 '{self.name}'입니다. 성격은: {self.persona}.\n"
                 + ((f"역할: {self.role or '미정'} — 역할에 맞게 행동하세요.\n" + self._intel_prompt())
                    if self._intel_prompt() else
-                   f"역할: {self.role or '미정'} — 역할명은 절대 말하지 말고 역할에 맞게 행동하세요.\n" + self._mafia_intel_prompt()) +
+                   f"역할: {self.role or '미정'} — 역할명은 절대 말하지 말고 역할에 맞게 행동하세요.\n" + self._mafia_intel_prompt() + self._doctor_intel_prompt()) +
                 "[중요] 당신은 채팅에 있는 다른 플레이어들과 **대화**하고 있습니다.\n"
                 "  - 들어온 프롬프트에 특정 발언이 있으면 그 말에 **직접 대답**하세요.\n"
                 "  - 사람 이름을 불러 대화하세요. 질문이 오면 답하세요.\n"
@@ -448,6 +475,7 @@ class AIDirector:
         for pl in self.players:
             pl.role = roles.get(pl.name, "citizen")
             pl.intel = {}                      # 새 판 — 지난 판의 조사 정보를 버린다
+            pl.doctor_log = []
             if core is not None:
                 pl.core_ref = core
             if claims_fn is not None:

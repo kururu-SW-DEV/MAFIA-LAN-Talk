@@ -147,13 +147,24 @@ class MafiaNightMixin:
         alive = core.alive_players()
         last = getattr(core, "last_protect", None)
         cands = [n for n in alive if n != last] or alive       # 자기 자신 포함, 어젯밤 대상 제외
+        claimed = [n for n in pl.public_police_claims() if n in cands] if hasattr(pl, "public_police_claims") else []
+        hist = "".join(f" {n}일차 밤: {t}님 보호 → {o}." for n, t, o in getattr(pl, "doctor_log", []))
         prompt = (f"[밤 행동 — 의사] 오늘 밤 마피아에게 노려질 것 같은 사람을 한 명 보호하세요"
                   f"(자신도 가능). 후보: {', '.join(cands)}. 어젯밤 보호한 사람은 연속 보호할 수 "
                   f"없어 후보에서 뺐습니다. 마피아가 제거하고 싶어 할 만한 사람(추리를 잘하거나 "
-                  f"의심을 많이 받는 사람)을 근거로 고르세요. 답은 오직 '선택 이름' 한 줄.")
-        self._night_ai_decide(pl, night_no, prompt, cands,
-                              lambda t: self._apply_night_actions({"save": t}),
-                              self.NIGHT_LLM_FALLBACK_MS)
+                  f"의심을 많이 받는 사람)을 근거로 고르세요."
+                  + (f" 경찰이라고 밝힌 사람: {', '.join(claimed)} — 마피아가 가장 먼저 노릴 사람입니다." if claimed else "")
+                  + (f" 내 지난 밤 기록:{hist}" if hist else "")
+                  + " 답은 오직 '선택 이름' 한 줄.")
+
+        def _save(t):
+            # 경찰을 자처한 사람이 살아 있으면 대부분 그 사람을 지킨다(마피아 AI가 그 사람을 노리므로)
+            import random as _r4
+            if claimed and _r4.random() < 0.75:
+                t = _r4.choice(claimed)
+            self._apply_night_actions({"save": t})
+
+        self._night_ai_decide(pl, night_no, prompt, cands, _save, self.NIGHT_LLM_FALLBACK_MS)
 
     def _night_ai_mafia(self, night_no):
         """AI 마피아 팀의 살해 대상을 LLM이 다시 고른다. 사람이 이미 정했으면(대화 목표나
@@ -598,12 +609,32 @@ class MafiaNightMixin:
         used.add(line)
         return line
 
+    def _record_doctor_night(self, died, victim):
+        """의사 AI에게 어젯밤 결과(내 보호 대상이 노려졌는지 등)를 기록한다 — 이후 발언·선택에 쓰인다."""
+        try:
+            core = self.core
+            protected = getattr(core, "last_protect", None)
+            if not protected:
+                return
+            if died:
+                out = f"밤에 {victim}님이 사망했습니다" + ("(내가 지킨 사람입니다 — 보호가 실패했습니다)" if victim == protected else "")
+            elif core.night_target and core.night_target == protected:
+                out = "마피아가 바로 그 사람을 노렸지만 살려냈습니다(희생자 없음)"
+            else:
+                out = "희생자가 없었습니다"
+            for pl in getattr(self, "ai", None) and self.ai.players or []:
+                if pl.role == "doctor" and pl.alive and hasattr(pl, "add_doctor_result"):
+                    pl.add_doctor_result(core.day_no - 1, protected, out)
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
     def _after_night(self, died, victim):
         if not self.mafia_active:
             return
         self._mafia_room_close()
         self._set_night_theme(False)
         self._sync_ai_alive()   # v1.11 — 밤사망 AI 즉시 발화 차단
+        self._record_doctor_night(died, victim)
         if died:
             role2 = self.core.reveal_role(victim)
             if self._mafia_is_host():
