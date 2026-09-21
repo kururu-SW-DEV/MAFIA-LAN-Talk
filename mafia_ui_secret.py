@@ -407,14 +407,41 @@ class MafiaSecretMixin:
                 if not (self.core.players.get(n) or {}).get("is_ai", False)
                 and (self.core.players.get(n) or {}).get("alive", True)]
 
+    _GHOST_LOG_MAX = 300
+
+    def _reset_ghost_state(self):
+        """유령방 대화·상태를 비운다. 게임이 시작될 때와 끝날 때만 부른다 — 예전에는 유령방을 열 때마다 대화 기록을 비워서
+        (낮·투표·밤마다 자동으로 다시 열림) 대화가 매 턴 초기화됐다."""
+        self._ghost_log = []
+        self._ghost_remote_log = {}
+        self._ghost_alone_noted = False
+        self._ghost_kick_sig = None
+        self._ghost_unread = False
+
+    def _ghost_roster_text(self):
+        """유령방 상단 현황: 생존/사망 인원과 사망자(유령)의 직업."""
+        core = self.core
+        me = getattr(self.engine, "name", None)
+        with core.lock:
+            n_alive = sum(1 for p in core.players.values() if p.get("alive"))
+            n_dead = sum(1 for p in core.players.values() if not p.get("alive"))
+        lines = [f"🟢 생존 {n_alive}명 · 💀 사망 {n_dead}명 — 유령 현황"]
+        for n in core.ghost_room_members():
+            role = core.reveal_role(n)
+            info = core.players.get(n) or {}
+            tag = n + (" (나)" if n == me else "") + (" 🤖" if info.get("is_ai") else "")
+            lines.append(f"👻 {tag} — {_role_kr(role) if role else '직업 확인 중'}")
+        return lines
+
     def _open_ghost_chat(self):
         """사망자끼리만 진실(직업) 알고 수다 떠는 비공개 유령 채팅방.
-        생존자에게는 전혀 노출되지 않는 별도 overlay."""
+        생존자에게는 전혀 노출되지 않는 별도 overlay. 대화는 게임이 끝날 때까지 누적되어, 닫았다가 다시 열어도 이어진다."""
         me = getattr(self.engine, "name", None)
         if not me or self.core.players.get(me, {}).get("alive", False):
             self.add_mafia_system("👻 유령 채팅방은 사망자 전용입니다 — 지금은 생존 중이라 들어올 수 없습니다")
             return
-        self._ghost_log = []
+        if getattr(self, "_ghost_log", None) is None:
+            self._reset_ghost_state()
         self._ghost_alone_noted = False
         # v1.17 — 유령방 UI 큐 준비(워커→메인스레드 안전 반영 경로)
         import queue as _q
@@ -424,17 +451,28 @@ class MafiaSecretMixin:
         if not ghosts:
             self.add_mafia_system("👻 사망자가 아직 없습니다.")
             return
-        body = self._mafia_overlay_open("👻 유령 채팅방 — 사망자들만의 공간", w=420, h=None)
+        body = self._mafia_overlay_open("👻 유령 채팅방 — 사망자들만의 공간", w=460, h=None)
         # v1.17 — overlay_open 내부의 prev-close가 flag를 reset하므로 '뒤'에서 복원
         self._ghost_ui_open = True
+        self._ghost_unread = False
         tk.Label(body, text="여기는 사망자만 보는 공간 — 모든 진실이 공개됩니다.",
-                 fg="#a5b4fc", bg=C_CARD, font=M_FONT_HELP).pack(pady=(10, 6))
+                 fg="#a5b4fc", bg=C_CARD, font=M_FONT_HELP).pack(pady=(10, 4))
+        # ── 상단: 유령 현황 + 직업 ──
+        rostf = tk.Frame(body, bg="#111827"); rostf.pack(fill="x", padx=18, pady=(0, 6))
+        self._ghost_roster = tk.Text(rostf, height=4, bd=0, bg="#111827", fg=M_TEXT_LIGHT, font=M_FONT_HELP,
+                                     wrap="word", state="disabled", padx=8, pady=6)
+        self._ghost_roster.pack(fill="x")
+        self._render_ghost_list(body)
+        # ── 대화 기록(누적) ──
         listf = tk.Frame(body, bg=C_CARD); listf.pack(fill="x", padx=18)
-        self._ghost_list = tk.Text(listf, height=8, bd=0, bg=C_CARD, fg=M_TEXT_LIGHT,
+        self._ghost_list = tk.Text(listf, height=12, bd=0, bg=C_CARD, fg=M_TEXT_LIGHT,
                                     font=M_FONT_BODY, wrap="word", state="disabled")
         self._ghost_list.pack(fill="x")
-        # 이력 — 유령 + 직업 공개
-        self._render_ghost_list(body)
+        self._ghost_list.configure(state="normal")
+        for ln in self._ghost_log[-self._GHOST_LOG_MAX:]:
+            self._ghost_list.insert("end", ln + chr(10))
+        self._ghost_list.configure(state="disabled")
+        self._ghost_list.see("end")
         # 입력
         ent_f = tk.Frame(body, bg=C_CARD); ent_f.pack(fill="x", padx=18, pady=(6, 10))
         self._ghost_ent = tk.Entry(ent_f, bg="#111827", fg=M_TEXT_LIGHT, relief="flat",
@@ -446,8 +484,13 @@ class MafiaSecretMixin:
             hover_bg="#9333ea", font_path=emoji_render.FONT_PATH_REGULAR,
             font_size=POPUP_BTN_PX, radius=6, pad_x=12, pad_y=4
         ).pack(side="right")
-        # v1.13 — 사망 AI가 유령방에서 수다를 떠는 자동 발화(1~5초 후에 1~2건)
-        self._kick_ghost_ai_chat()
+        self._ensure_ghost_poll()
+        # v1.13 — 사망 AI가 유령방에서 수다를 떠는 자동 발화: 유령 구성이 바뀌었을 때만(새 사망자가 들어왔을 때) 한다.
+        # 열 때마다 하면 같은 인사가 반복되고 대화가 어지러워진다.
+        sig = tuple(sorted(ghosts))
+        if sig != getattr(self, "_ghost_kick_sig", None):
+            self._ghost_kick_sig = sig
+            self._kick_ghost_ai_chat()
 
     def _kick_ghost_ai_chat(self):
         """v1.13 — 유령방에 사망 AI가 자동으로 수다를 떠는 발화.
@@ -502,6 +545,10 @@ class MafiaSecretMixin:
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
         if getattr(self, "_ghost_ui_open", False):
+            _now = time.time()
+            if _now - getattr(self, "_ghost_roster_ts", 0) > 2.0:      # 새 사망자·직업 공개를 현황에 반영
+                self._ghost_roster_ts = _now
+                self._render_ghost_list(None)
             self.root.after(300, self._poll_ghost_ui_queue)
         else:
             self._ghost_poll_on = False
@@ -552,16 +599,23 @@ class MafiaSecretMixin:
                 lambda p_=pl, msg=t:
                     self._append_ghost(f"👻 {p_.name}: {msg}", ai=True))
 
-    def _render_ghost_list(self, body):
-        box = getattr(self, "_ghost_list", None)
+    def _render_ghost_list(self, body=None):
+        """유령방 상단 현황(생존·사망 인원, 유령과 직업)을 그린다."""
+        box = getattr(self, "_ghost_roster", None)
         if not box:
             return
-        box.configure(state="normal")
-        box.delete("1.0", "end")
-        for n in self.core.ghost_room_members():
-            role = self.core.reveal_role(n)
-            box.insert("end", f"👻 {n} — 직업 공개: {_role_kr(role) if role else '...'}\n")
-        box.configure(state="disabled")
+        try:
+            if not box.winfo_exists():
+                self._ghost_roster = None
+                return
+            lines = self._ghost_roster_text()
+            box.configure(state="normal", height=max(2, min(7, len(lines))))
+            box.delete("1.0", "end")
+            box.insert("end", chr(10).join(lines))
+            box.configure(state="disabled")
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+            self._ghost_roster = None
 
     def _ghost_send(self, ev=None):
         ent = getattr(self, "_ghost_ent", None)
@@ -572,10 +626,24 @@ class MafiaSecretMixin:
             return
         ent.delete(0, "end")
         self._append_ghost(f"{self.engine.name}: {txt}")
-        # 다른 유령들의 화면에 실제로도 전달될 수 있어나 현재 P2P 협재임으로 로컬만.
-        # (문서 대로의 '유빙방'은 로컬 구현 — P2P 확장은 예정)
+        # 호스트가 죽은 사람이면 원격의 다른 사망자에게도 전달한다(원격 사망자의 말은 호스트가 중계 — ghost_to_ai 처리부).
+        self._ghost_relay_humans(self.engine.name, txt)
         # 내 말에 사망 AI가 대답해 티키타카가 이어지게 한다.
         self._ghost_ai_reply(txt)
+
+    def _ghost_relay_humans(self, speaker, text):
+        """호스트 전용: 사람 사망자가 유령방에 쓴 말을 다른 사람 사망자에게 전달한다(호스트 본인이 죽었으면 호스트 화면에도 표시).
+        예전에는 사망 AI만 답하고 사람 사망자끼리는 서로의 말을 볼 수 없었다."""
+        if not self._mafia_is_host():
+            return
+        me = getattr(self.engine, "name", None)
+        for n, p in list(self.core.players.items()):
+            if p.get("is_ai") or p.get("alive", True) or n == speaker:
+                continue
+            if n == me:
+                self._append_ghost(f"👻 {speaker}: {text}")
+            else:
+                self._mafia_send_private(n, "ghost_say", name=speaker, text=text)
 
     _GHOST_FALLBACK_REPLY = (
         "ㅋㅋ 맞아 그러게", "오 그렇구나~", "나도 그렇게 생각해", "헐 진짜?",
@@ -689,23 +757,27 @@ class MafiaSecretMixin:
             self._ghost_relay_on = False
 
     def _append_ghost(self, text, ai=False):
-        box = getattr(self, "_ghost_list", None)
-        if not box:
-            return
-        try:
-            if not box.winfo_exists():
-                self._ghost_list = None
-                return
-        except Exception:
-            self._ghost_list = None
-            return
+        """유령방 대화 한 줄을 기록한다. 창이 닫혀 있어도 기록해 두었다가 다시 열 때 보여 준다(누적)."""
         log = getattr(self, "_ghost_log", None)
         if log is None:
             log = self._ghost_log = []
         log.append(text)
-        del log[:-30]
+        del log[:-self._GHOST_LOG_MAX]
+        box = getattr(self, "_ghost_list", None)
+        if not box:
+            self._ghost_unread = True                    # 닫혀 있는 동안 온 말 — 버튼에 새 글 표시
+            return
+        try:
+            if not box.winfo_exists():
+                self._ghost_list = None
+                self._ghost_unread = True
+                return
+        except Exception:
+            self._ghost_list = None
+            self._ghost_unread = True
+            return
         box.configure(state="normal")
-        box.insert("end", text + "\n")
+        box.insert("end", text + chr(10))
         box.configure(state="disabled")
         box.see("end")
 

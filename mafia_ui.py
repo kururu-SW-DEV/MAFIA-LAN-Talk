@@ -427,6 +427,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         self._mafia_start_disconnect_watch()
 
         self._police_claims = {}
+        self._reset_ghost_state()
         self._doctor_claims = {}
         self._bluff_count = 0
         self.ai.assign_roles(assigned, self.core, self._claims_for)
@@ -504,6 +505,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
 
     def _on_game_end(self, winner):
         self._mafia_room_close()
+        self._reset_ghost_state()
         if self._mafia_is_host():
             self._mafia_broadcast("end", winner=winner, roles={
                 n: p.get("role") for n, p in self.core.players.items()})

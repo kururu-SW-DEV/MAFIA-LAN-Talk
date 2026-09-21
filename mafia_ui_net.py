@@ -105,6 +105,7 @@ class MafiaNetMixin:
         수신 시 core가 LOBBY가 아니라 명단 동기화가 조용히 무시된다)."""
         label = "시민" if winner == "citizen" else "마피아"
         self._mafia_room_close()
+        self._reset_ghost_state()
         self._play_mafia_sound("citizen_win" if winner == "citizen" else "mafia_win")
         self.add_mafia_system(f"⚖ 게임 종료 — {label} 팀 승리!")
         if roles and isinstance(roles, dict):
@@ -518,11 +519,12 @@ class MafiaNetMixin:
             info = self.core.players.get(spk) or {}
             if (self._mafia_is_host() and spk and ev.get("text") and self.mafia_active
                     and not info.get("is_ai") and not info.get("alive", True)):
+                self._ghost_relay_humans(spk, ev.get("text", ""))     # 다른 사람 사망자에게(호스트가 죽었으면 호스트 화면에도)
                 self._ghost_ai_reply(ev.get("text", ""), speaker=spk)
         elif t == "ghost_say":
             # 호스트의 사망 AI가 보낸 유령방 답장(개인 전송) — 내 유령방이 열려 있을 때만 표시
-            if ev.get("text") and getattr(self, "_ghost_list", None):
-                self._append_ghost(f"👻 {ev.get('name') or '?'}: {ev.get('text')}", ai=True)
+            if ev.get("text") and isinstance(ev.get("text"), str):
+                self._append_ghost(f"👻 {ev.get('name') or '?'}: {ev.get('text')}", ai=True)   # 창이 닫혀 있어도 누적 기록
         elif t == "mafia_to_ai":
             # 원격 사람 마피아가 비밀방에 쓴 말을 호스트의 AI 마피아에게 전달
             spk = ev.get("name")
@@ -578,6 +580,7 @@ class MafiaNetMixin:
                     self.root.after(100, lambda r=role: self._show_role_popup(r))
         elif t == "start":
             self.mafia_active = True
+            self._reset_ghost_state()
             self._recruiting = False
             self._recruited_humans = []
             self._my_joined = False

@@ -79,6 +79,7 @@ class MafiaViewMixin:
         """오버레이가 닫힐 때 유령방 UI 참조를 끊는다(닫힌 위젯을 계속 만지면 TclError, 300ms 폴러도 안 멈춤)."""
         self._ghost_ui_open = False
         self._ghost_list = None
+        self._ghost_roster = None
         self._ghost_ent = None
 
     def _mafia_overlay_close(self, *a):
@@ -711,6 +712,7 @@ class MafiaViewMixin:
                     fg="#e5e7eb", bg="#111827", font=FONT_SM, padx=14, pady=4)
                 lbl.bind("<Configure>", lambda e: lbl.configure(wraplength=max(200, e.width - 28)))
                 emoji_render.apply(lbl, FONT_SM)
+            self._refresh_ghost_button()
             txt = self._mafia_roster_text()
             if txt and getattr(self, "mafia_bar_is_game", False) and self.current == self.mafia_room_key():
                 lbl.configure(text=txt)
@@ -718,6 +720,37 @@ class MafiaViewMixin:
                     lbl.pack(fill="x", before=self.chat_wrap)
             else:
                 lbl.pack_forget()
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
+    def _refresh_ghost_button(self):
+        """내가 사망했을 때 채팅 화면 우하단(맨 아래로 버튼 바로 위)에 [👻 유령방] 버튼을 띄운다. 닫힌 사이에 새 말이 오면 ●를 붙인다."""
+        try:
+            anchor = getattr(self, "scroll_btn", None)
+            if anchor is None:
+                return
+            core = getattr(self, "core", None)
+            me = getattr(self.engine, "name", None)
+            dead = bool(core and me and getattr(self, "mafia_active", False)
+                        and me in core.players and not core.players[me].get("alive", True))
+            show = dead and getattr(self, "mafia_bar_is_game", False) and self.current == self.mafia_room_key()
+            btn = getattr(self, "_ghost_btn", None)
+            if not show:
+                if btn is not None:
+                    btn.place_forget()
+                return
+            label = "👻 유령방" + (" ●" if getattr(self, "_ghost_unread", False) else "")
+            if btn is None:
+                btn = self._ghost_btn = emoji_render.make_pill_button(
+                    anchor.master, label, self._open_ghost_chat, bg="#6d28d9", fg="white",
+                    hover_bg="#7c3aed", font_path=emoji_render.FONT_PATH_REGULAR,
+                    font_size=POPUP_BTN_PX, radius=14, pad_x=14, pad_y=6)
+                self._ghost_btn_label = label
+            elif getattr(self, "_ghost_btn_label", None) != label:
+                btn.config(text=label)
+                self._ghost_btn_label = label
+            btn.place(in_=self.chat, relx=1.0, rely=1.0, x=-16, y=-64, anchor="se")
+            btn.lift()
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
 
