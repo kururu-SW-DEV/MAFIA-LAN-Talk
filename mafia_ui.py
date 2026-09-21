@@ -482,6 +482,10 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             "[게임 종료] 사회자가 승자를 발표했습니다. 당신 역할과 승패는 사회자가 별도 안내했습니다. "
             "진 심정이 담긴 마무리 한마디를 하세요 (역할명은 말해도 됨)."))
         self.mafia_active = False
+        # 판이 끝나면 방장 신분도 내려놓는다. 그대로 두면 이 PC가 다음 판에서 클라이언트가 됐을 때
+        # 방장 전용 이벤트(recruit_start 등)를 '방장에게 온 것'으로 보고 전부 버려 참가 신청 버튼이 안 뜬다.
+        self.mafia_host_mode = False
+        self._recruiter_host = None
         self._recruiting = False
         self._recruited_humans = []
         self._my_joined = False
