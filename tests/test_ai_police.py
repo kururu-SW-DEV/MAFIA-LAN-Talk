@@ -37,7 +37,7 @@ core.phase = Phase.DAY; core.day_no = 2
 cop = mafia_ai.PlayerAgent("레오", "차분함", "#fff"); cop.booted = True
 civ = mafia_ai.PlayerAgent("철수", "활발함", "#fff"); civ.booted = True
 d = mafia_ai.AIDirector(); d.players = [cop, civ]
-d.assign_roles({"레오": "police", "철수": "citizen"}, core)
+d.assign_roles({"레오": "police", "철수": "citizen"}, core, app._claims_for)
 
 # 1) 조사 정보의 영구 기록
 cop.add_intel("미나", "mafia"); cop.add_intel("영희", "citizen")
@@ -49,8 +49,9 @@ core.players["미나"]["alive"] = False
 check("확인된 마피아가 죽으면 더 이상 대상이 아님", cop.known_mafia_alive() == [])
 core.players["미나"]["alive"] = True
 pr = cop._intel_prompt()
-check("프롬프트에 마피아·시민 확인 정보와 지목·커밍아웃 지시가 들어감",
-      "미나" in pr and "영희" in pr and "커밍아웃" in pr and "2일차" in pr)
+check("프롬프트에 마피아·시민 확인 정보와 '정체 숨기기·옹호만' 지시가 들어감(커밍아웃 지시는 없음)",
+      "미나" in pr and "영희" in pr and "편들어" in pr and "절대 하지 마세요" in pr and "커밍아웃" not in pr)
+check("마피아를 말로 폭로하지 말고 투표로만 대응하라고 지시함", "폭로하지 말고 투표로만" in pr)
 check("경찰이 아닌 AI의 프롬프트에는 없음", civ._intel_prompt() == "")
 
 # 2) 실제 발언 시스템 프롬프트
@@ -58,8 +59,8 @@ captured = {}
 mafia_ai._llm_call = lambda msgs, max_tokens=350, timeout=45: (captured.update(msgs=msgs) or "ㅋㅋ 미나 좀 수상해")
 cop.say("[낮 토론] 한마디 하세요")
 sysmsg = captured["msgs"][0]["content"]
-check("경찰 AI의 발언 프롬프트에 비밀 정보가 실림", "[경찰의 비밀 정보" in sysmsg and "마피아로 확인됨(생존): 미나" in sysmsg)
-check("경찰 AI에게 '역할명은 절대 말하지 말라'는 금지가 걸려 있지 않음", "역할명은 절대 말하지 말고" not in sysmsg)
+check("경찰 AI의 발언 프롬프트에 비밀 정보가 실림", "[경찰의 비밀 정보" in sysmsg and "마피아가 확실한 생존자: 미나" in sysmsg)
+check("경찰 AI에게도 '역할명은 절대 말하지 말라'는 규칙이 그대로 걸려 있음", "역할명은 절대 말하지 말고" in sysmsg)
 civ.say("[낮 토론] 한마디 하세요")
 check("시민 AI의 프롬프트는 그대로(역할 비공개 규칙 유지)", "역할명은 절대 말하지 말고" in captured["msgs"][0]["content"])
 # 기억 창을 밀어내도 정보는 유지
@@ -115,7 +116,7 @@ core.players["영희"]["role"] = "doctor"
 mafia = mafia_ai.PlayerAgent("미나", "장난꾸러기", "#fff"); mafia.booted = True
 d2 = mafia_ai.AIDirector(); d2.players = [mafia, civ]
 core.players["미나"]["role"] = "mafia"
-d2.assign_roles({"미나": "mafia", "철수": "citizen"}, core, app._live_police_claims)
+d2.assign_roles({"미나": "mafia", "철수": "citizen"}, core, app._claims_for)
 check("마피아 AI가 경찰 자처자를 알고 있음", mafia.police_claimants() == ["영희"])
 check("시민 AI는 모름", civ.police_claimants() == [])
 mafia_ai._llm_call = lambda msgs, max_tokens=350, timeout=45: (captured.update(msgs=msgs) or "ㅋㅋ 영희 좀 수상해")

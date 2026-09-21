@@ -65,7 +65,8 @@ class MafiaVoteMixin:
             if now_t - getattr(self, "_last_ai_banter", 0) >= 11:
                 self._last_ai_banter = now_t
                 if random_mod.random() < 0.7:
-                    self._ai_vs_ai_banter()
+                    if not self._ai_mafia_bluff():      # 마피아 AI의 거짓 커밍아웃이 먼저, 아니면 AI끼리 토론
+                        self._ai_vs_ai_banter()
         self._day_tick = self.root.after(1000, self._day_tick_loop)
 
     # v1.40 — 토론 중 '투표 X' 조기 자동투표/파싱 로직 제거.
@@ -341,10 +342,13 @@ class MafiaVoteMixin:
                     # 경찰 AI는 조사로 확인한 마피아가 살아 있으면 대부분 그 사람에게 투표한다(몰표 분산도 적용 안 함).
                     known = ag.known_mafia_alive() if hasattr(ag, "known_mafia_alive") else []
                     claimants = ag.police_claimants() if hasattr(ag, "police_claimants") else []
+                    dclaims = ag.doctor_claimants() if hasattr(ag, "doctor_claimants") else []
                     if known and random_mod.random() < 0.9:
                         final_target = random_mod.choice(known)
                     elif claimants and random_mod.random() < 0.75:
                         final_target = random_mod.choice(claimants)   # 마피아 AI: 경찰을 자처한 사람에게 표를 모은다
+                    elif dclaims and not claimants and random_mod.random() < 0.5:
+                        final_target = random_mod.choice(dclaims)     # 경찰 자처자가 없으면 의사 자처자에게
                     else:
                         final_target = self._pile_on_redirect(ag.name, target)
                     if getattr(ag, "role", None) == "doctor" and hasattr(ag, "public_police_claims"):

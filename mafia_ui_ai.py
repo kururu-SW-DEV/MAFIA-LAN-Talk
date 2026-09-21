@@ -155,30 +155,132 @@ class MafiaAIChatMixin:
             self.ai.observe_all(self.engine.name, text)   # 모든 AI가 내 말을 기억
         self._ai_hear_human(self.engine.name, text)
 
-    # "나 경찰이야" 같은 커밍아웃 — 부인("경찰 아니야")은 제외하고 문장 끝맺음까지 요구해 오탐을 줄인다.
+    # "나 경찰이야 / 나 의사야" 같은 커밍아웃 — 부인("경찰 아니야")은 제외하고 문장 끝맺음까지 요구해 오탐을 줄인다.
     _POLICE_CLAIM_RE = re.compile(
         r"(?:나|저|내가|제가|난|전)(?:는|은|가)?\s*(?:진짜\s*|바로\s*|사실\s*)?경찰"
-        r"(?:이야|이에요|이예요|입니다|임|이거든|이다|이라고|인데|이니까|이지|이라니까|이란|이라)")
+        r"(?:이야|야|이에요|에요|이예요|예요|입니다|임|이거든|거든|이다|이라고|라고|인데|이니까|니까|이지|지|이라니까|라니까|이란|란|이라|라)")
     _POLICE_DENY_RE = re.compile(r"경찰(?:이|은)?\s*(?:아니|아냐|아님|아닌|아닙)")
+    _DOCTOR_CLAIM_RE = re.compile(
+        r"(?:나|저|내가|제가|난|전)(?:는|은|가)?\s*(?:진짜\s*|바로\s*|사실\s*)?의사"
+        r"(?:이야|야|이에요|에요|이예요|예요|입니다|임|이거든|거든|이다|이라고|라고|인데|이니까|니까|이지|지|이라니까|라니까|이란|란|이라|라)")
+    _DOCTOR_DENY_RE = re.compile(r"의사(?:이|은)?\s*(?:아니|아냐|아님|아닌|아닙)")
 
     def _note_police_claim(self, speaker, text):
-        """누군가 스스로 경찰이라고 밝히면 기록한다(마피아 AI가 그 사람을 표적으로 삼는다). 호스트 전용."""
+        """누군가 스스로 경찰/의사라고 밝히면 기록한다(마피아 AI의 표적, 의사 AI의 보호 대상, 진짜 경찰·의사 AI가 가짜를
+        가려내는 근거가 된다). 호스트 전용. 사람의 발언도, 마피아 AI의 거짓 커밍아웃도 똑같이 기록한다."""
         if not (getattr(self, "mafia_host_mode", False) and isinstance(text, str) and speaker):
             return
-        if self._POLICE_DENY_RE.search(text) or not self._POLICE_CLAIM_RE.search(text):
-            return
         info = (getattr(self, "core", None) and self.core.players.get(speaker)) or None
-        if info and info.get("alive", True):
-            self.__dict__.setdefault("_police_claims", {})[speaker] = getattr(self.core, "day_no", 1)
+        if not (info and info.get("alive", True)):
+            return
+        day = getattr(self.core, "day_no", 1)
+        if self._POLICE_CLAIM_RE.search(text) and not self._POLICE_DENY_RE.search(text):
+            self.__dict__.setdefault("_police_claims", {})[speaker] = day
+        if self._DOCTOR_CLAIM_RE.search(text) and not self._DOCTOR_DENY_RE.search(text):
+            self.__dict__.setdefault("_doctor_claims", {})[speaker] = day
 
-    def _live_police_claims(self):
-        """경찰을 자처했고 아직 살아 있으며 마피아 팀이 아닌 사람(마피아 AI의 표적 후보)."""
+    def _claims_for(self, viewer_role=None, kind="police"):
+        """경찰(kind='police')·의사('doctor')를 자처했고 아직 살아 있는 사람. 마피아가 보는 목록에서는 동료 마피아를 뺀다
+        (자기 팀의 가짜 커밍아웃을 공격하지 않도록). 그 밖의 역할은 진짜인지 모르므로 거르지 않는다."""
         core = getattr(self, "core", None)
         if core is None:
             return []
-        mafias = set(core.mafias())
-        return [n for n in list(getattr(self, "_police_claims", {}))
-                if (core.players.get(n) or {}).get("alive", True) and n not in mafias]
+        store = getattr(self, "_police_claims" if kind == "police" else "_doctor_claims", None) or {}
+        mafias = set(core.mafias()) if viewer_role == "mafia" else set()
+        return [n for n in list(store) if (core.players.get(n) or {}).get("alive", True) and n not in mafias]
+
+    def _live_police_claims(self):
+        return self._claims_for("mafia", "police")
+
+    def _live_doctor_claims(self):
+        return self._claims_for("mafia", "doctor")
+
+    def _mafia_claim_target(self, cand):
+        """마피아 AI의 밤 표적 후보 중 경찰(90%)·의사(70%) 자처자가 있으면 그 사람, 없으면 None."""
+        import random as _rc
+        pol = [n for n in self._live_police_claims() if n in cand]
+        if pol and _rc.random() < 0.9:
+            return _rc.choice(pol)
+        doc = [n for n in self._live_doctor_claims() if n in cand]
+        if doc and _rc.random() < 0.7:
+            return _rc.choice(doc)
+        return None
+
+    # ---- 경찰 AI: 마피아가 아닌 사람이 궁지에 몰리면 정체를 숨기고 옹호만 한다 ----
+    _ACCUSE_RE = re.compile(r"수상|의심|마피아|범인|이상하|찍|몰아|처형|투표")
+
+    def _maybe_police_defend(self, speaker, text):
+        if not (getattr(self, "mafia_host_mode", False) and getattr(self, "ai", None) and getattr(self, "core", None)
+                and self.core.phase == Phase.DAY and isinstance(text, str) and self._ACCUSE_RE.search(text)):
+            return
+        cd = self.__dict__.setdefault("_defend_cooldown", {})
+        for cop in self.ai.players:
+            if getattr(cop, "role", None) != "police" or not cop.alive or not getattr(cop, "booted", False) or getattr(cop, "busy", False):
+                continue
+            if cop.name == speaker:
+                continue
+            for x in cop.known_citizens_alive():
+                if x == speaker or x not in text:
+                    continue
+                now = time.time()
+                if now - cd.get((cop.name, x), 0) < 40 or random_mod.random() >= 0.7:
+                    continue
+                cd[(cop.name, x)] = now
+                prompt = (f"[옹호] '{x}'님이 의심받고 있습니다. 당신은 '{x}'님이 마피아가 아니라는 걸 알지만, 경찰이라는 사실이나 "
+                          f"조사했다는 말은 절대 하지 말고 '{x}님은 마피아 아닌 것 같아요' 식으로 말투·행동 같은 자연스러운 이유를 붙여 "
+                          f"편들어 주세요. 다른 사람을 마피아라고 지목하지 마세요. 2문장 이내.")
+                self.root.after(random_mod.randint(1200, 2800),
+                                lambda p=cop, pr=prompt: self.ai.say_one_async(p, lambda _pl, _pr=pr: _pr))
+                return
+
+    # ---- 마피아 AI: 경찰·의사를 자처하며 혼동을 준다 ----
+    _BLUFF_MAX = 2
+
+    def _ai_mafia_bluff(self):
+        """마피아 AI 한 명이 거짓으로 경찰/의사를 자처해 시민을 혼란시킨다(판당 최대 2회, AI당 1회). 하면 True."""
+        if not (self.mafia_active and getattr(self, "mafia_host_mode", False) and getattr(self, "ai", None)
+                and self.core.phase == Phase.DAY):
+            return False
+        if getattr(self, "_bluff_count", 0) >= self._BLUFF_MAX:
+            return False
+        cand_ai = [pl for pl in self.ai.players if pl.alive and getattr(pl, "booted", False)
+                   and getattr(pl, "role", None) == "mafia" and not getattr(pl, "busy", False) and not getattr(pl, "bluffed", False)]
+        if not cand_ai:
+            return False
+        rivals = self._claims_for("mafia", "police")           # 진짜일 수 있는 다른 경찰 자처자
+        counter = bool(rivals)
+        p = 0.5 if counter else (0.15 if getattr(self.core, "day_no", 1) >= 2 else 0.05)
+        if random_mod.random() >= p:
+            return False
+        pl = random_mod.choice(cand_ai)
+        if counter:
+            role = "police"
+        else:
+            role = "police" if random_mod.random() < 0.4 else "doctor"
+            if role == "doctor" and self._claims_for("mafia", "doctor"):
+                role = "police"
+        mafias = set(self.core.mafias())
+        alive = self.core.alive_players()
+        mates = [n for n in alive if n in mafias and n != pl.name]
+        others = [n for n in alive if n not in mafias]
+        if role == "police":
+            prompt = ("[거짓 커밍아웃 — 마피아 전략] 당신은 마피아지만 시민들을 혼란시키려고 지금 '나 경찰이야'라고 거짓으로 밝히세요"
+                      "(이번 한 번만 신분을 말해도 됩니다). "
+                      + (f"이미 경찰을 자처한 사람({', '.join(rivals)})이 있으니 그 사람이 가짜라고 하면서 '나야말로 진짜 경찰이야'라고 맞불을 놓으세요. "
+                         if counter else "")
+                      + "그럴듯한 어젯밤 조사 결과를 지어내세요: "
+                      + (f"마피아 동료({', '.join(mates)})를 '마피아 아니었어'라고 감싸거나, " if mates else "")
+                      + f"시민({', '.join(others[:6])}) 중 한 명을 '마피아였어'라고 몰아도 됩니다. "
+                      "반드시 '나 경찰이야'라는 표현을 쓰고, 2문장 이내로 친구들끼리 카톡하듯 말하세요.")
+        else:
+            prompt = ("[거짓 커밍아웃 — 마피아 전략] 당신은 마피아지만 시민들을 혼란시키려고 지금 '나 의사야'라고 거짓으로 밝히세요"
+                      "(이번 한 번만 신분을 말해도 됩니다). '어젯밤 ○○를 지켰어'처럼 그럴듯하게 지어내세요"
+                      + (f"(나 자신이나 마피아 동료({', '.join(mates)})를 지켰다고 해도 됩니다)" if mates else "")
+                      + ". 반드시 '나 의사야'라는 표현을 쓰고, 2문장 이내로 친구들끼리 카톡하듯 말하세요.")
+        pl.bluffed = True
+        self._bluff_count = getattr(self, "_bluff_count", 0) + 1
+        self.ai.say_one_async(pl, lambda _p, _pr=prompt: _pr)
+        return True
 
     def _ai_hear_human(self, speaker, text):
         """사람 참가자의 발언에 AI가 반응하게 한다. 이 PC의 사용자든 원격 참가자든 똑같이 처리한다.
@@ -187,6 +289,7 @@ class MafiaAIChatMixin:
         if not getattr(self, "ai", None) or not getattr(self, "core", None):
             return
         self._note_police_claim(speaker, text)
+        self._maybe_police_defend(speaker, text)
         try:
             self._human_last_talk = getattr(self, "_human_last_talk", None) or {}
             self._human_last_talk[speaker] = time.time()
@@ -414,7 +517,8 @@ class MafiaAIChatMixin:
             if not info or not info.get("is_ai") or not info.get("alive", True):
                 return
         self.root.after(0, lambda: self.add_mafia_ai(name, text))
-        self._note_police_claim(name, text)      # AI 경찰의 커밍아웃도 마피아 AI가 듣는다
+        self._note_police_claim(name, text)      # AI(경찰의 커밍아웃, 마피아의 거짓 커밍아웃)도 기록
+        self._maybe_police_defend(name, text)
         # 다른 AI들도 이 발언을 기억(대화 맥락 유지)
         if getattr(self, "ai", None):
             self.ai.observe_all(name, text)

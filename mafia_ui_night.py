@@ -31,9 +31,8 @@ class MafiaNightMixin:
             # 인간 마피아까지 포함해 동료 살해 제외 + 자투 금지
             cand = [n for n in alive if n != pl.name and n not in all_mafias]
             if cand:
-                claimed = [n for n in self._live_police_claims() if n in cand]
-                # 경찰을 자처한 사람이 있으면 마피아 AI는 대부분 그 사람을 노린다
-                t = _rr.choice(claimed) if (claimed and _rr.random() < 0.9) else _rr.choice(cand)
+                # 경찰(90%)·의사(70%)를 자처한 사람이 있으면 마피아 AI는 대부분 그 사람을 노린다
+                t = self._mafia_claim_target(cand) or _rr.choice(cand)
                 results.setdefault("kill", t)
                 results["multi"].append(t)
                 results["multi_pairs"].append((pl.name, t))
@@ -191,10 +190,9 @@ class MafiaNightMixin:
                   + f"답은 오직 '선택 이름' 한 줄.")
 
         def apply(target):
-            import random as _r3
-            claimed = [n for n in self._live_police_claims() if n in cands]
-            if claimed and _r3.random() < 0.85:
-                target = _r3.choice(claimed)        # 경찰을 자처한 사람은 LLM 판단보다 우선 제거 대상
+            forced = self._mafia_claim_target(cands)
+            if forced:
+                target = forced        # 경찰·의사를 자처한 사람은 LLM 판단보다 우선 제거 대상
             for pl in ais:
                 if (core.players.get(pl.name) or {}).get("alive"):
                     core.mafia_night_vote(pl.name, target)       # 이후 합의 단계에서 AI 지목으로 쓰인다

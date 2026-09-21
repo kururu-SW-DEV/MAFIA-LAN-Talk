@@ -39,7 +39,7 @@ app._police_claims = {}
 doc = mafia_ai.PlayerAgent("레오", "차분함", "#fff"); doc.booted = True
 civ = mafia_ai.PlayerAgent("철수", "활발함", "#fff"); civ.booted = True
 d = mafia_ai.AIDirector(); d.players = [doc, civ]
-d.assign_roles({"레오": "doctor", "철수": "citizen"}, core, app._live_police_claims)
+d.assign_roles({"레오": "doctor", "철수": "citizen"}, core, app._claims_for)
 app.ai.players = [doc, civ]
 
 # 1) 프롬프트
@@ -69,7 +69,7 @@ check("희생자가 없고 노려진 것도 없으면 단순 기록", doc.doctor
 for i in range(8):
     doc.add_doctor_result(i, "철수", "x")
 check("기록은 최근 5건만 유지", len(doc.doctor_log) == 5)
-d.assign_roles({"레오": "doctor", "철수": "citizen"}, core, app._live_police_claims)
+d.assign_roles({"레오": "doctor", "철수": "citizen"}, core, app._claims_for)
 check("새 판이면 기록이 초기화됨", doc.doctor_log == [])
 p2 = doc._doctor_intel_prompt()
 doc.add_doctor_result(2, "영희", "마피아가 바로 그 사람을 노렸지만 살려냈습니다(희생자 없음)")

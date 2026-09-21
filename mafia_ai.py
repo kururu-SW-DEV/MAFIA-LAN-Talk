@@ -282,24 +282,46 @@ class PlayerAgent:
             return True
         return bool((core.players.get(name) or {}).get("alive", True))
 
-    def known_mafia_alive(self):
-        """조사로 확인한 마피아 중 아직 살아 있는 사람(자기 자신 제외)."""
-        if self.role != "police":
-            return []
-        return [n for n, r in self.intel.items() if r == "mafia" and n != self.name and self._alive(n)]
-
-    def public_police_claims(self):
-        """채팅에서 스스로 경찰이라고 밝혔고 아직 살아 있는 사람(나 제외). 누구나 볼 수 있는 공개 정보다."""
+    def _claims(self, kind):
+        """채팅에서 스스로 경찰/의사라고 밝혔고 아직 살아 있는 사람(나 제외). 누구나 볼 수 있는 공개 정보다.
+        마피아가 보는 목록은 호스트가 동료 마피아를 뺀다(자기 팀은 진짜가 아님을 아니까)."""
         if self.claims_fn is None:
             return []
         try:
-            return [n for n in self.claims_fn() if n != self.name]
+            return [n for n in self.claims_fn(self.role, kind) if n != self.name]
         except Exception:
             return []
 
+    def public_police_claims(self):
+        return self._claims("police")
+
+    def public_doctor_claims(self):
+        return self._claims("doctor")
+
     def police_claimants(self):
-        """(마피아 AI) 경찰을 자처한 생존자 — 표적 후보(동료 마피아는 호스트의 claims_fn이 이미 뺀다)."""
+        """(마피아 AI) 경찰을 자처한 생존자 — 표적 후보."""
         return self.public_police_claims() if self.role == "mafia" else []
+
+    def doctor_claimants(self):
+        """(마피아 AI) 의사를 자처한 생존자 — 표적 후보."""
+        return self.public_doctor_claims() if self.role == "mafia" else []
+
+    def known_mafia_alive(self):
+        """확실히 마피아인 생존자. 경찰: 조사로 확인한 마피아 + 나 말고 경찰을 자처한 사람(경찰은 게임에 나 한 명뿐이라
+        다른 자처자는 거짓말쟁이 = 마피아). 의사: 나 말고 의사를 자처한 사람(의사도 나 한 명뿐)."""
+        out = []
+        if self.role == "police":
+            out += [n for n, r in self.intel.items() if r == "mafia" and n != self.name and self._alive(n)]
+            out += [n for n in self.public_police_claims() if n not in out]
+        elif self.role == "doctor":
+            out += self.public_doctor_claims()
+        return out
+
+    def known_citizens_alive(self):
+        """(경찰 AI) 조사로 마피아가 아님이 확인된 생존자."""
+        if self.role != "police":
+            return []
+        return [n for n, r in self.intel.items() if r == "citizen" and n != self.name and self._alive(n)]
 
     # ---------- 의사 AI의 밤 기록 ----------
     def add_doctor_result(self, night_no, target, outcome):
@@ -312,47 +334,57 @@ class PlayerAgent:
         if self.role != "doctor":
             return ""
         claims = self.public_police_claims()
-        if not self.doctor_log and not claims:
+        liars = self.public_doctor_claims()
+        if not self.doctor_log and not claims and not liars:
             return ""
         lines = ["[의사의 비밀 정보 — 내가 아는 사실]"]
         for n, t, out in self.doctor_log:
             lines.append(f"  · {n}일차 밤: {t}님을 보호했고 {out}")
         if claims:
-            lines.append(f"  · {', '.join(claims)}이(가) 채팅에서 '나는 경찰'이라고 밝혔습니다. 진짜 경찰이면 마피아가 가장 먼저 노립니다.")
+            lines.append(f"  · {', '.join(claims)}이(가) 채팅에서 '나는 경찰'이라고 밝혔습니다. 진짜 경찰이면 마피아가 가장 먼저 노립니다(가짜일 수도 있음).")
+        if liars:
+            lines.append(f"  · {', '.join(liars)}이(가) '나는 의사'라고 주장합니다. 의사는 나뿐이니 그 사람은 거짓말쟁이(마피아)가 확실합니다.")
         lines.append("  - 마피아에게 노려졌다가 내가 살린 사람이나 경찰을 자처한 사람은 시민 쪽 핵심일 수 있으니 낮에도 감싸 주고(투표로 몰지 말고), 밤엔 계속 지켜 주세요.")
+        if liars:
+            lines.append("  - 의사를 자처한 가짜는 '진짜 의사 같으면 그렇게 말 안 하지' 식으로 의심하며 몰아가세요(투표는 자동 반영). 단 내가 의사라고 맞불을 놓지는 마세요.")
         lines.append("  - 내가 의사라는 사실과 누구를 보호했는지는 채팅에 절대 쓰지 마세요(밝히면 마피아의 표적이 됩니다). 감싸는 이유는 '왠지 믿음이 간다' 식으로 자연스럽게.")
         return chr(10).join(lines) + chr(10)
 
     def _mafia_intel_prompt(self):
-        cl = self.police_claimants()
-        if not cl:
+        pc = self.police_claimants()
+        dc = self.doctor_claimants()
+        if not pc and not dc:
             return ""
-        return ("[마피아의 비밀 정보]" + chr(10) +
-                f"  · {', '.join(cl)}이(가) 채팅에서 '나는 경찰'이라고 밝혔습니다. 진짜 경찰일 가능성이 높아 마피아에게 가장 위험한 사람입니다." + chr(10) +
-                "  - 그 사람을 시민들 앞에서 믿을 수 없다고 몰아가세요(예: '갑자기 경찰이라니 타이밍이 너무 수상한데?', '증거도 없이 커밍아웃하면 다 믿어야 해?')." + chr(10) +
-                "  - 단, 내가 마피아라는 것·마피아 동료·밤 계획은 절대 말하지 말고 시민인 척 자연스럽게 의심하세요. 밤 살해 대상과 투표는 그 사람을 우선합니다." + chr(10))
+        lines = ["[마피아의 비밀 정보]"]
+        if pc:
+            lines.append(f"  · {', '.join(pc)}이(가) 채팅에서 '나는 경찰'이라고 밝혔습니다. 진짜 경찰일 가능성이 높아 마피아에게 가장 위험한 사람입니다.")
+        if dc:
+            lines.append(f"  · {', '.join(dc)}이(가) 채팅에서 '나는 의사'라고 밝혔습니다. 진짜 의사면 우리 살해를 막는 사람입니다.")
+        lines.append("  - 그 사람을 시민들 앞에서 믿을 수 없다고 몰아가세요(예: '갑자기 경찰이라니 타이밍이 너무 수상한데?', '증거도 없이 커밍아웃하면 다 믿어야 해?').")
+        lines.append("  - 단, 내가 마피아라는 것·마피아 동료·밤 계획은 절대 말하지 말고 시민인 척 자연스럽게 의심하세요. 밤 살해 대상과 투표는 경찰 자처자를 우선합니다.")
+        return chr(10).join(lines) + chr(10)
 
     def _intel_prompt(self):
-        if self.role != "police" or not self.intel:
+        """경찰 AI의 비밀 정보. 신분(경찰)과 '조사했다'는 사실은 끝까지 숨기고, 마피아를 직접 지목·폭로하지도 않는다.
+        마피아가 아님이 확인된 사람이 궁지에 몰렸을 때만 그 사람을 옹호한다."""
+        if self.role != "police":
             return ""
         mafs = self.known_mafia_alive()
-        cits = [n for n, r in self.intel.items() if r == "citizen" and self._alive(n)]
+        cits = self.known_citizens_alive()
         if not mafs and not cits:
             return ""
-        day = getattr(self.core_ref, "day_no", 1) if self.core_ref is not None else 1
         lines = ["[경찰의 비밀 정보 — 내가 밤 조사로 직접 확인한 사실]"]
         if mafs:
-            lines.append(f"  · 마피아로 확인됨(생존): {', '.join(mafs)}")
+            lines.append(f"  · 마피아가 확실한 생존자: {', '.join(mafs)}")
         if cits:
-            lines.append(f"  · 마피아가 아님으로 확인됨(생존): {', '.join(cits)}")
+            lines.append(f"  · 마피아가 아님으로 확인된 생존자: {', '.join(cits)}")
+        lines.append("  - 내가 경찰이라는 사실과 '조사했다'는 말은 절대 하지 마세요. 누가 마피아라고 직접 지목하거나 폭로하지도 마세요.")
+        if cits:
+            lines.append("  - 마피아가 아님으로 확인된 사람이 의심받거나 몰릴 때만 그 사람을 편들어 주세요. 예: 'OO님은 마피아 아닌 것 같아요, 아까 하는 말이 자연스러웠어요'"
+                         " — 이유는 말투·행동 같은 그럴듯한 관찰로 붙이고, 확신하는 어조는 가볍게.")
         if mafs:
-            lines.append("  - 마피아로 확인된 사람을 토론에서 수상하다고 계속 짚고 투표도 그 사람에게 하세요. 확신을 갖되 말투는 가볍게.")
-            lines.append(f"  - 지금은 {day}일차입니다. 첫날엔 '왠지 저 사람이 걸린다' 정도로 은근히 몰고, 2일차 이후이거나 누가 나를 의심하거나"
-                         " 토론이 다른 사람에게 쏠릴 때는 \"나 경찰이야, ○○ 조사했더니 마피아였어\"라고 **커밍아웃해도 됩니다**"
-                         "(이때만 내 역할과 조사 결과를 말해도 됨. 조사 결과를 지어내거나 조사 안 한 사람을 말하지 말 것).")
-        if cits:
-            lines.append("  - 마피아가 아님으로 확인된 사람이 몰리면 근거를 대며 변호하세요(이유는 '왠지 믿음이 간다' 식으로 가볍게, 커밍아웃 시엔 조사했다고 말해도 됨).")
-        return "\n".join(lines) + "\n"
+            lines.append("  - 마피아가 확실한 사람에 대해서는 말로 폭로하지 말고 투표로만 대응하세요(내 표는 자동으로 그 사람에게 갑니다).")
+        return chr(10).join(lines) + chr(10)
 
     # ---------- 세션 부트스트랩(최초 1회, ~2초) ----------
     def start_bootstrap(self, host_name, players_desc):
@@ -381,9 +413,7 @@ class PlayerAgent:
             sys_prompt = (
                 "/no_thinking\n"
                 f"당신은 마피아 게임 참가자 '{self.name}'입니다. 성격은: {self.persona}.\n"
-                + ((f"역할: {self.role or '미정'} — 역할에 맞게 행동하세요.\n" + self._intel_prompt())
-                   if self._intel_prompt() else
-                   f"역할: {self.role or '미정'} — 역할명은 절대 말하지 말고 역할에 맞게 행동하세요.\n" + self._mafia_intel_prompt() + self._doctor_intel_prompt()) +
+                + (f"역할: {self.role or '미정'} — 역할명은 절대 말하지 말고 역할에 맞게 행동하세요.\n" + self._intel_prompt() + self._mafia_intel_prompt() + self._doctor_intel_prompt()) +
                 "[중요] 당신은 채팅에 있는 다른 플레이어들과 **대화**하고 있습니다.\n"
                 "  - 들어온 프롬프트에 특정 발언이 있으면 그 말에 **직접 대답**하세요.\n"
                 "  - 사람 이름을 불러 대화하세요. 질문이 오면 답하세요.\n"
@@ -393,7 +423,7 @@ class PlayerAgent:
                 "    다른 관점을 덧대거나 변호하라.\n"
                 "  - 외국어·한자·번역투 금지 — 실제 한국 단체 카톡방 구어체만.\n"
                 "  - 의심을 바꿀 때는 이유를 붙여라(급격한 태세전환 금지).\n"
-                "  - 비밀 정보(내 역할/전략)는 절대 채팅에 쓰지 마라(단, [경찰의 비밀 정보]에서 허용한 커밍아웃은 예외).\n"
+                "  - 비밀 정보(내 역할/전략)는 절대 채팅에 쓰지 마라(단, 사회자가 지시한 거짓 커밍아웃은 예외).\n"
                 "  - [말투] 친구들끼리 노는 편안한 분위기로. 따지거나 추궁하는 어투, 논리·근거를\n"
                 "    나열하는 발표식 말투, 상대 발언을 조목조목 반박하는 말투는 피하고, 의심은\n"
                 "    '왠지 좀 그래 보여~' 같은 가벼운 느낌으로 말하라. 리액션·농담·공감을 섞어라.\n"
@@ -476,6 +506,7 @@ class AIDirector:
             pl.role = roles.get(pl.name, "citizen")
             pl.intel = {}                      # 새 판 — 지난 판의 조사 정보를 버린다
             pl.doctor_log = []
+            pl.bluffed = False               # 마피아 AI의 거짓 커밍아웃은 판당 1회
             if core is not None:
                 pl.core_ref = core
             if claims_fn is not None:
