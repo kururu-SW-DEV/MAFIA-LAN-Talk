@@ -417,6 +417,7 @@ class MafiaSecretMixin:
         self._ghost_alone_noted = False
         self._ghost_kick_sig = None
         self._ghost_unread = False
+        self._ai_color_cache = None          # 게임이 시작·종료되면 명단이 바뀌므로 AI 색 캐시도 비운다
 
     def _ghost_roster_text(self):
         """유령방 상단 현황: 생존/사망 인원과 사망자(유령)의 직업."""

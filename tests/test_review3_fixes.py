@@ -170,6 +170,41 @@ check("AI 명단이 바뀌면 캐시가 갱신되어 새 AI도 색을 받음", c
 names = sorted(["철수", "영희", "미나", "두식"])
 check("배정 규칙(이름 정렬 순서)이 이전과 같음", [app._ai_distinct_color(n) for n in names] == [app.AI_DISTINCT_COLORS[i] for i in range(4)])
 
+# ---- ⑤-2 사람·시스템 라벨도 락 없이 즉시 반환 ----
+class _CountLock:
+    def __init__(self, inner):
+        self.inner, self.n = inner, 0
+
+    def __enter__(self):
+        self.n += 1
+        return self.inner.__enter__()
+
+    def __exit__(self, *a):
+        return self.inner.__exit__(*a)
+
+
+_real_lock = core.lock
+cl = core.lock = _CountLock(_real_lock)
+app._ai_distinct_color("철수")                       # 워밍업(캐시 채움)
+cl.n = 0
+r_h = app._ai_distinct_color("나"); r_h2 = app._ai_distinct_color("방장")
+r_sys = app._ai_distinct_color("🖥 사회자"); r_sys2 = app._ai_distinct_color("시스템")
+r_ai = app._ai_distinct_color("영희")
+check("사람·사회자·시스템 라벨은 None이고 AI는 색을 받음", r_h is None and r_h2 is None and r_sys is None and r_sys2 is None and r_ai is not None)
+check(f"사람·시스템 라벨을 반복 조회해도 락에 들어가지 않음(락 진입 {cl.n}회)", cl.n == 0)
+app._reset_ghost_state()
+check("게임 시작·종료 때 색 캐시가 비워짐", app._ai_color_cache is None)
+old_map = {n: app._ai_distinct_color(n) for n in ("철수", "영희", "미나", "두식")}
+# 같은 인원수로 이름만 바뀐 새 판 — 캐시가 낡은 명단을 붙잡지 않는다
+for n in ("철수", "영희", "미나", "두식"):
+    core.players.pop(n)
+for n in ("가", "나다", "다라", "라마"):
+    core.players[n] = {"is_ai": True, "alive": True, "role": "citizen"}
+app._reset_ghost_state()
+new_colors = [app._ai_distinct_color(n) for n in sorted(["가", "나다", "다라", "라마"])]
+check("같은 인원수의 새 명단도 이름 정렬 순서대로 올바른 색을 받음", new_colors == [app.AI_DISTINCT_COLORS[i] for i in range(4)])
+core.lock = _real_lock
+
 # ---- ⑥ engine.stop()이 대기 Timer를 취소 ----
 eng = app.engine
 tm = threading.Timer(60, lambda: None); tm.daemon = True; tm.start()

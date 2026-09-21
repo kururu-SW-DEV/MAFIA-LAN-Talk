@@ -34,23 +34,28 @@ class MafiaViewMixin:
     def _ai_distinct_color(self, label):
         """게임 중 AI 참가자에게 서로 다른 색을 준다. 이름 정렬 순서로 배정하므로 모든 참가자 화면에서
         같은 색이 되고(명단은 전원이 같다), 게임 밖이거나 AI가 아니면 None.
-        말풍선·아바타를 그릴 때마다 호출되므로 명단이 바뀌지 않는 동안은 결과를 캐시해 정렬·락을 피한다."""
+        말풍선·아바타를 그릴 때마다 호출되므로 명단이 바뀌지 않는 동안은 캐시한다. 캐시에는 사람 참가자도
+        None으로 넣어 두고, 명단에 없는 라벨(사회자·시스템 등)은 바로 None을 돌려줘 사람의 발언에서도 락에 들어가지 않는다."""
         core = getattr(self, "core", None)
         if not core or not getattr(self, "mafia_active", False):
             return None
         try:
             cache = getattr(self, "_ai_color_cache", None)
             n_players = len(core.players)
-            if cache is not None and cache[0] == n_players and label in cache[1]:
-                return cache[1][label]
-            with core.lock:
-                info = core.players.get(label) or {}
-                if not info.get("is_ai"):
+            if cache is not None and cache[0] == n_players:
+                colors = cache[1]
+                if label in colors:
+                    return colors[label]
+                if label not in core.players:
                     return None
+            with core.lock:
                 ais = sorted(n for n, p in core.players.items() if p.get("is_ai"))
+                humans = [n for n, p in core.players.items() if not p.get("is_ai")]
             palette = self.AI_DISTINCT_COLORS
-            self._ai_color_cache = (n_players, {n: palette[i % len(palette)] for i, n in enumerate(ais)})
-            return self._ai_color_cache[1].get(label)
+            colors = {n: palette[i % len(palette)] for i, n in enumerate(ais)}
+            colors.update({n: None for n in humans})
+            self._ai_color_cache = (n_players, colors)
+            return colors.get(label)
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
             return None

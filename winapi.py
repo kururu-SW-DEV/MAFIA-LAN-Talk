@@ -383,6 +383,57 @@ class FLASHWINFO(ctypes.Structure):
     ]
 
 
+# 트레이 아이콘 메시지의 종류. NOTIFYICON_VERSION_4에서는 lParam의 아래 16비트가 이벤트, 위 16비트가 아이콘 ID다
+# (버전 0 방식이면 lParam 전체가 이벤트). 그래서 아래 16비트로 비교한다.
+_TRAY_LEFT_EVENTS = {0x0202, 0x0203, 0x0400, 0x0401, 0x0405}   # 좌클릭/더블클릭/풍선 클릭 등
+_TRAY_MENU_EVENTS = {0x0205, 0x007B}                             # 우클릭(WM_RBUTTONUP) / WM_CONTEXTMENU
+
+
+def classify_tray_event(lparam):
+    """트레이 아이콘 콜백 lParam → "left"(창 열기) / "menu"(우클릭 메뉴) / None."""
+    ev = int(lparam) & 0xFFFF
+    if int(lparam) in _TRAY_LEFT_EVENTS or ev in _TRAY_LEFT_EVENTS:
+        return "left"
+    if ev in _TRAY_MENU_EVENTS:
+        return "menu"
+    return None
+
+
+def show_native_menu(hwnd, entries):
+    """마우스 위치에 윈도우 기본 팝업 메뉴를 띄우고 고른 항목의 id를 돌려준다(취소하면 0).
+    entries: [(id, 문구, 체크 여부), ...] — id가 None이면 구분선. 트레이 아이콘 우클릭 메뉴용(메인 스레드에서 호출)."""
+    if not (_HAS_CTYPES and os.name == "nt"):
+        return 0
+    user32 = ctypes.windll.user32
+    user32.CreatePopupMenu.restype = wintypes.HMENU
+    user32.AppendMenuW.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_size_t, wintypes.LPCWSTR]
+    user32.AppendMenuW.restype = wintypes.BOOL
+    user32.TrackPopupMenu.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                      wintypes.HWND, ctypes.c_void_p]
+    user32.TrackPopupMenu.restype = wintypes.UINT
+    user32.DestroyMenu.argtypes = [wintypes.HMENU]
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    pt = wintypes.POINT()
+    user32.GetCursorPos(ctypes.byref(pt))
+    menu = user32.CreatePopupMenu()
+    if not menu:
+        return 0
+    try:
+        for eid, text, checked in entries:
+            if eid is None:
+                user32.AppendMenuW(menu, 0x800, 0, None)                      # MF_SEPARATOR
+            else:
+                user32.AppendMenuW(menu, 0x8 if checked else 0, eid, text)    # MF_CHECKED / MF_STRING
+        user32.SetForegroundWindow(hwnd)          # 안 하면 메뉴 밖을 눌러도 메뉴가 닫히지 않는다(윈도우 알려진 동작)
+        # TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN
+        cmd = user32.TrackPopupMenu(menu, 0x100 | 0x80 | 0x2 | 0x20, pt.x, pt.y, 0, hwnd, None)
+        user32.PostMessageW(hwnd, 0, 0, 0)        # WM_NULL — MS 문서 권장(메뉴가 다음 클릭을 삼키지 않게)
+        return int(cmd or 0)
+    finally:
+        user32.DestroyMenu(menu)
+
+
 class Notifier:
     """Windows 작업표시줄 풍선(토스트) 알림 — 표준 라이브러리 ctypes만 사용.
 
@@ -393,8 +444,10 @@ class Notifier:
     _FLASH_INTERVAL_MS = 2500  # 재발동 간격 — Windows가 자체적으로 몇 초 만에 끄는 것보다 짧게
     _FLASH_MAX_MS = 5 * 60 * 1000  # 최대 5분까지만 반복 — 그 이후엔 자동으로 멈춰 무한 반복 방지
 
-    def __init__(self, root, on_click=None):
+    def __init__(self, root, on_click=None, on_menu=None):
         self.root = root
+        self.on_menu = on_menu  # 트레이 아이콘을 우클릭했을 때(플래그만 세우는 콜백)
+        self._subclass_cb = None
         self.ok = False
         self._nid = None
         self._shell32 = None
@@ -439,6 +492,7 @@ class Notifier:
             if self._shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid)):
                 self._nid = nid
                 self.ok = True
+                self._install_subclass(hwnd)
                 # 정상 종료(_quit)를 못 거치고 프로세스가 끝나면(예외 종료 등) 죽은 아이콘이 트레이에
                 # 계속 쌓인다 — 파이썬이 끝날 때라도 반드시 제거한다(close는 여러 번 불려도 안전).
                 import atexit
@@ -450,6 +504,33 @@ class Notifier:
                     pass
         except Exception:
             self.ok = False
+
+    def _install_subclass(self, hwnd):
+        """트레이 우클릭을 창 프로시저에서 직접 받는다. 메시지 훅(WH_GETMESSAGE)은 '큐에 들어온' 메시지만 보는데,
+        탐색기가 콜백을 SendMessage로 보내면 훅을 거치지 않아 우클릭이 사라진다 — 서브클래싱은 두 경우 모두 받는다.
+        콜백 안에서는 Tk를 건드리지 않고 플래그만 세운다."""
+        try:
+            comctl = ctypes.windll.comctl32
+            SUBCLASSPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM,
+                                              wintypes.LPARAM, ctypes.c_size_t, ctypes.c_size_t)
+            comctl.SetWindowSubclass.argtypes = [wintypes.HWND, SUBCLASSPROC, ctypes.c_size_t, ctypes.c_size_t]
+            comctl.SetWindowSubclass.restype = wintypes.BOOL
+            comctl.DefSubclassProc.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            comctl.DefSubclassProc.restype = ctypes.c_ssize_t
+
+            def proc(h, msg, wp, lp, uid, ref):
+                try:
+                    if msg == WM_TRAYICON and classify_tray_event(lp) == "menu" and self.on_menu:
+                        self.on_menu()
+                except Exception:
+                    pass
+                return comctl.DefSubclassProc(h, msg, wp, lp)
+
+            self._subclass_cb = SUBCLASSPROC(proc)      # GC 방지
+            self._subclass_hwnd = hwnd
+            comctl.SetWindowSubclass(hwnd, self._subclass_cb, 1, 0)
+        except Exception:
+            self._subclass_cb = None
 
     def _load_tray_icon(self):
         """트레이용 아이콘 핸들. 트레이는 작은 아이콘(보통 16px, 배율이 높으면 20~24px) 크기를 쓴다.

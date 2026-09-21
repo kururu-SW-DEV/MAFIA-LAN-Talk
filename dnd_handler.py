@@ -76,6 +76,7 @@ class DndMixin:
             # 이 메시지를 (wParam=아이콘 ID, lParam=클릭 종류)로 보내준다. 값은
             # winapi.py의 정의와 반드시 일치해야 한다.
             WM_TRAYICON = 0x0400 + 20
+            from winapi import classify_tray_event      # 좌클릭/우클릭 종류 판별(lParam 아래 16비트)
             TRAY_CLICK_LPARAMS = {0x0202, 0x0203, 0x0400, 0x0401, 0x0405}  # 좌클릭/더블클릭/풍선클릭 등
 
             class MSG(ctypes.Structure):
@@ -117,7 +118,9 @@ class DndMixin:
                             msg.message = 0  # WM_NULL로 치환하여 Tkinter 충돌 방지
                             if paths:
                                 self._dropped_files_queue.extend(paths)
-                        elif msg.message == WM_TRAYICON and msg.lParam in TRAY_CLICK_LPARAMS:
+                        elif msg.message == WM_TRAYICON and classify_tray_event(msg.lParam) == "menu":
+                            self._tray_menu_pending = True        # 우클릭 — 메뉴는 메인 루프(_pump)에서 띄운다(훅 안에서 Tk 금지)
+                        elif msg.message == WM_TRAYICON and classify_tray_event(msg.lParam) == "left":
                             # 주의: 이 훅 콜백 안에서 Tkinter API(root.after 포함)를 직접
                             # 부르면 Tcl이 GIL을 안 쥔 상태에서 호출돼 인터프리터가 패닉
                             # 나는 것으로 이미 확인된 바 있다(드래그 앤 드롭 크래시 때와

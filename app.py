@@ -28,7 +28,8 @@ from netutils import (default_datadir, default_name, korea_time_str, sanitize_ch
                        get_clipboard_image_bytes, get_clipboard_files)
 from canvas_utils import round_rect, smooth_circle_photo, bind_scoped_mousewheel
 from winapi import (Notifier, apply_dark_titlebar, apply_ime_font,
-                     is_run_at_startup_enabled, set_run_at_startup, force_foreground_window)
+                     is_run_at_startup_enabled, set_run_at_startup, force_foreground_window,
+                     show_native_menu, classify_tray_event)
 from widgets import SplitterHandle, ScrollBottomButton, MinimalScrollbar, PillButton, ChatSearchBar, ReplyBanner, PinBanner, EmojiPicker, MentionPopup, make_search_icon
 from engine import Engine
 import stickers
@@ -187,7 +188,8 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
         self._show_empty("대화 상대를 선택하거나 상대를 연결해\n대화를 시작하세요")
         self._refresh_list()
         try:
-            self._notifier = Notifier(self.root, on_click=self._on_notify_click)
+            self._notifier = Notifier(self.root, on_click=self._on_notify_click,
+                                       on_menu=lambda: setattr(self, "_tray_menu_pending", True))
         except Exception:
             self._notifier = None
         if self._notifier:
@@ -774,6 +776,49 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
         if self.current:
             items.insert(7, ("현재 대화 숨기기", lambda: self._hide_conversation(self.current)))
         self._popup_menu(x, y, items)
+
+    # 트레이 아이콘 우클릭 메뉴 항목 id
+    _TRAY_ID_TOPMOST, _TRAY_ID_STARTUP, _TRAY_ID_SOUND, _TRAY_ID_QUIT = 1, 2, 3, 4
+
+    def _tray_menu_entries(self):
+        """트레이 우클릭 메뉴: 항상 위에 표시 / Windows 시작 시 자동 실행 / 알림음(체크 항목) + 프로그램 종료."""
+        try:
+            top_on = bool(self.root.attributes("-topmost")) if self.engine else False
+        except tk.TclError:
+            top_on = False
+        startup_on = is_run_at_startup_enabled()
+        sound_on = self.engine.notify_sound_enabled if self.engine else True
+        return [
+            (self._TRAY_ID_TOPMOST, "항상 위에 표시", top_on),
+            (self._TRAY_ID_STARTUP, "Windows 시작 시 자동 실행", startup_on),
+            (self._TRAY_ID_SOUND, "알림음", sound_on),
+            (None, "", False),
+            (self._TRAY_ID_QUIT, "프로그램 종료", False),
+        ]
+
+    def _tray_menu_dispatch(self, cmd):
+        """고른 메뉴 항목을 실행한다(설정 창의 같은 항목과 같은 함수를 쓴다)."""
+        if cmd == self._TRAY_ID_TOPMOST:
+            self._toggle_always_on_top()
+        elif cmd == self._TRAY_ID_STARTUP:
+            self._toggle_run_at_startup()
+        elif cmd == self._TRAY_ID_SOUND:
+            self._toggle_notify_sound()
+        elif cmd == self._TRAY_ID_QUIT:
+            self._quit()
+
+    def _show_tray_menu(self):
+        try:
+            hwnd = int(self.root.wm_frame(), 16)
+        except Exception:
+            hwnd = int(self.root.winfo_id())
+        try:
+            cmd = show_native_menu(hwnd, self._tray_menu_entries())
+        except Exception as _e:
+            applog.swallowed(_e)
+            return
+        if cmd:
+            self._tray_menu_dispatch(cmd)
 
     def _toggle_always_on_top(self):
         if not self.engine:
@@ -2572,6 +2617,9 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
         if getattr(self, "_notify_click_pending", False):
             self._notify_click_pending = False
             self._on_notify_click()
+        if getattr(self, "_tray_menu_pending", False):
+            self._tray_menu_pending = False
+            self._show_tray_menu()
         while True:
             try:
                 ev = self.q.get_nowait()
