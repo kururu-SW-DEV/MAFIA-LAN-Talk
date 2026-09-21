@@ -164,6 +164,50 @@ class MafiaNetMixin:
         if tok and ev_type in self._TOKEN_EVENTS:
             kw["tok"] = tok
         self._mafia_send_private(host, ev_type, **kw)
+        if ev_type in ("vote_cast", "defense_vote_cast"):
+            self._expect_host_ack(ev_type, kw)
+
+    _ACK_WAIT_MS = 4000
+
+    def _expect_host_ack(self, ev_type, kw):
+        """내 표를 호스트가 실제로 접수했는지 확인한다. 예전에는 보내기만 하고 "투표 완료"를 띄워서, 호스트가
+        표를 버려도(버전 불일치·인증 실패·유실) 나는 성공한 줄 알았고 호스트는 집계가 안 됐다.
+        호스트가 접수하면 "✅ 방장이 내 표를 접수했습니다" 쪽지를 돌려준다. 4초 안에 없으면 한 번 다시 보내고,
+        그래도 없으면 원인을 안내한다."""
+        pend = self.__dict__.setdefault("_ack_pending", {})
+        pend[ev_type] = (dict(kw), 0)
+        try:
+            self.root.after(self._ACK_WAIT_MS, lambda: self._check_host_ack(ev_type))
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
+    def _check_host_ack(self, ev_type):
+        pend = getattr(self, "_ack_pending", {})
+        item = pend.get(ev_type)
+        if not item or not getattr(self, "mafia_active", False) or self._mafia_is_host():
+            pend.pop(ev_type, None)
+            return
+        kw, tries = item
+        host = getattr(self, "_recruiter_host", None)
+        label = "찬반 표" if ev_type == "defense_vote_cast" else "투표"
+        if tries >= 1 or not host:
+            pend.pop(ev_type, None)
+            self.add_mafia_system(
+                f"⚠ 방장이 내 {label}를 접수했다는 확인이 없습니다. 방장과 같은 버전(v1.76 이상)인지, "
+                "방장과 연결이 끊기지 않았는지 확인하세요. 방장 화면에 '접수'가 안 뜨면 집계되지 않은 것입니다.")
+            return
+        pend[ev_type] = (kw, tries + 1)
+        try:
+            self._mafia_send_private(host, ev_type, **kw)      # 한 번 더 보낸다(호스트는 같은 표를 덮어쓸 뿐)
+            self.root.after(self._ACK_WAIT_MS, lambda: self._check_host_ack(ev_type))
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
+    def _clear_host_ack(self, text):
+        pend = getattr(self, "_ack_pending", None)
+        if not pend:
+            return
+        pend.pop("defense_vote_cast" if "찬반" in text else "vote_cast", None)
 
     # 토큰이 있어야 하는 참가자→호스트 이벤트(투표·찬반·밤 행동)
     _TOKEN_EVENTS = frozenset({"vote_cast", "defense_vote_cast", "night_action"})
@@ -513,7 +557,10 @@ class MafiaNetMixin:
                     self.ai.observe_all(name, say_text)
                     self._ai_hear_human(name, say_text)   # 원격 참가자의 발언에도 AI가 반응한다
         elif t == "sys":
-            self.add_mafia_system(ev.get("text", ""))
+            _txt = ev.get("text", "")
+            if isinstance(_txt, str) and _txt.startswith("✅ 방장이 내"):
+                self._clear_host_ack(_txt)
+            self.add_mafia_system(_txt)
         elif t == "hdm":
             # 개인 쪽지 — target==내 이름일 때만 표시
             me = getattr(self.engine, "name", None)
@@ -915,6 +962,8 @@ class MafiaNetMixin:
         else:
             self.add_mafia_system(f"🗳 {voter} 기권 접수 · 진행률 {_pd}/{_pt}")
         self._refresh_vote_progress_label()
+        if voter != getattr(self.engine, "name", None):
+            self._mafia_send_private(voter, "sys", text="✅ 방장이 내 " + ("투표를 접수했습니다 (익명)" if target else "기권을 접수했습니다"))
         self._broadcast_vote_done(voter, target)
         if revote:
             self._check_revote_done()
@@ -933,6 +982,8 @@ class MafiaNetMixin:
         self.core.cast_defense_vote(voter, bool(yes))
         self.add_mafia_system(f"⚖ {voter}님 찬반 표 접수 (익명) · {self._defense_progress_text()}")
         self._broadcast_defense_progress(voter)
+        if voter != getattr(self.engine, "name", None):
+            self._mafia_send_private(voter, "sys", text="✅ 방장이 내 찬반 표를 접수했습니다 (익명)")
         self._maybe_resolve_defense(name)
 
     def _sync_ai_alive(self):

@@ -383,7 +383,11 @@ class MafiaVoteMixin:
             self._cancel_vote_popup()
             return
         remain = max(0, int(self._vote_remaining))
-        self._vote_lbl.config(text=f"⏳ 남은 시간: {remain}초")
+        try:
+            self._vote_lbl.config(text=f"⏳ 남은 시간: {remain}초")
+        except tk.TclError:
+            self._vote_lbl = None          # 팝업이 이미 닫혔다 — 남은 틱을 멈춘다(예전엔 매 틱 오류가 났다)
+            return
         self._vote_remaining -= 1
         if remain <= 0:
             self._schedule_tally(0)

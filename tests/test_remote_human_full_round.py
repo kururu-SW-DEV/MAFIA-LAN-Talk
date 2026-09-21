@@ -64,6 +64,9 @@ try:
     check("B의 표가 호스트 core에 반영됨(토큰 검증 통과)",
           pump(lambda: appA.core.votes.get(b_nm) == target, timeout=10))
     check("호스트 화면에 'B님 투표 접수' 안내가 뜸", any(b_nm in t and "투표 접수" in t for t in A_sys))
+    check("B 화면에 '방장이 내 투표를 접수했습니다' 확인이 돌아옴(표가 실제로 집계됐다는 뜻)",
+          pump(lambda: b_sees("방장이 내 투표를 접수했습니다"), timeout=10))
+    check("접수 확인이 오면 대기 중이던 재전송/경고는 해제됨", "vote_cast" not in getattr(stubB, "_ack_pending", {}))
     appA._popup_vote(target)                                  # 호스트 사용자도 같은 대상에게
     check("원격 B 화면에도 AI들의 투표 진행이 표시됨(예전엔 호스트 화면에만 떴다)",
           pump(lambda: any("(AI)님 투표 완료" in (r.get("text") or "") for r in stubB.mafia_history), timeout=30))
@@ -82,6 +85,8 @@ try:
                                               or getattr(stubB, "_mafia_overlay", None) is not None, timeout=10))
     stubB._cast_defense(target, True)
     check("B의 찬반 표가 호스트에 반영됨", pump(lambda: appA.core.defense_yes.get(b_nm) is True, timeout=10))
+    check("B 화면에 '방장이 내 찬반 표를 접수했습니다' 확인이 돌아옴",
+          pump(lambda: b_sees("방장이 내 찬반 표를 접수했습니다"), timeout=10))
     check("호스트 화면에 'B님 찬반 표 접수' 안내가 뜸", any(b_nm in t and "찬반" in t for t in A_sys))
     check("원격 B 화면에도 AI들의 찬반 표 진행이 표시됨",
           pump(lambda: any("찬반 표 접수" in (r.get("text") or "") and "(AI)님" in (r.get("text") or "")
@@ -133,6 +138,16 @@ try:
                        if isinstance(appA.core.night_targets, dict) else ai_target in appA.core.night_targets, timeout=10))
     for role, opened in results.items():
         check(f"{role} B: 원격 화면에 밤 행동 패널이 열림", opened)
+
+    # ============ 호스트가 표를 버리는 경우(버전 불일치·인증 실패 등): 투표자에게 경고가 떠야 한다 ============
+    stubB._ACK_WAIT_MS = 300
+    _orig_recv = appA._host_receive_vote_cast
+    appA._host_receive_vote_cast = lambda *a, **k: None         # 호스트가 아무 응답 없이 표를 버림
+    before_n = len(stubB.mafia_history)
+    stubB._mafia_send_to_host("vote_cast", voter=b_nm, target=ai_names[2])
+    check("호스트가 표를 접수하지 않으면 투표자(B) 화면에 경고가 뜸(성공한 줄 착각 방지)",
+          pump(lambda: any("접수했다는 확인이 없습니다" in (r.get("text") or "") for r in stubB.mafia_history[before_n:]), timeout=10))
+    appA._host_receive_vote_cast = _orig_recv
 
 finally:
     try:
