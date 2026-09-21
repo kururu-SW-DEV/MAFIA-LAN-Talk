@@ -230,14 +230,15 @@ class MafiaVoteMixin:
             applog.swallowed(_swallow_e)
 
     def _ai_vote_user_should_wait(self):
-        """v1.40 — 유저 우선: 유저가 아직 투표 전이고 유예시간(5초) 안 지났으면 True(AI는 대기)."""
-        me_name = getattr(self.engine, "name", None)
-        if not me_name or not getattr(self, "core", None):
+        """v1.40 — 사람 우선: 아직 투표 전인 사람 참가자가 있고 유예시간(5초)이 안 지났으면 True(AI는 대기).
+        호스트 사용자만 보던 것을 원격 참가자까지 포함해, 사람이 고르기 전에 AI 표가 먼저 쏟아지지 않게 한다."""
+        if not getattr(self, "core", None):
             return False
-        if not (self.core.players.get(me_name) or {}).get("alive", True):
-            return False   # 유저 사망 — 관전 모드, 대기 불필요
-        if me_name in self.core.votes or me_name in self.core.abstains:
-            return False   # 유저가 이미 투표함
+        pending = [n for n, p in self.core.players.items()
+                   if not p.get("is_ai") and p.get("alive", True)
+                   and n not in self.core.votes and n not in self.core.abstains]
+        if not pending:
+            return False   # 사람이 모두 투표했거나 전원 사망(관전) — 대기 불필요
         opened = getattr(self, "_vote_popup_open_ts", 0)
         return (time.time() - opened) < 5.0
 
@@ -341,6 +342,7 @@ class MafiaVoteMixin:
                     self.core.cast_vote(ag.name, final_target)
                     _pd, _pt = self._vote_progress_counts()
                     self.add_mafia_system(f"🗳 {ag.name}(AI)님 투표 완료 (익명 개표) · 진행률 {_pd}/{_pt}")
+                    self._broadcast_vote_done(ag.name, final_target)   # 원격 참가자 화면에도 진행 표시
                     self._refresh_vote_progress_label()
                     try:
                         self._update_vote_btn_state()
@@ -681,6 +683,7 @@ class MafiaVoteMixin:
                 self.core.votes[pl.name] = target
                 _pd, _pt = self._vote_progress_counts()
                 self.add_mafia_system(f"🗳 {pl.name}(AI)님 재투표 완료 (익명 개표) · 진행률 {_pd}/{_pt}")
+                self._broadcast_vote_done(pl.name, target)
         except Exception:
             try:
                 self.core.cast_abstain(pl.name)
@@ -873,6 +876,7 @@ class MafiaVoteMixin:
             if ok:
                 # v1.47 — 대상(찬성/반대) 비공개 — 본투표 익명화와 동일 원칙 적용
                 self.add_mafia_system(f"⚖ {pl.name}님 찬반 표 접수 (익명) · {self._defense_progress_text()}")
+                self._broadcast_defense_progress(pl.name)
             self._maybe_resolve_defense(defendant)
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
@@ -1058,6 +1062,7 @@ class MafiaVoteMixin:
         self._mafia_overlay_close()
         if self._mafia_is_host():
             self.add_mafia_system(f"⚖ {me}님 찬반 표 접수 (익명) · {self._defense_progress_text()}")
+            self._broadcast_defense_progress(me)
             # 즉시 개표 체크(이전: 500ms after만 — AI 표 누락 시 멈춤)
             self._maybe_resolve_defense(name)
         else:

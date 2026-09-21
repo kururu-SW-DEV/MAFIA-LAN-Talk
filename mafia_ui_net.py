@@ -380,8 +380,52 @@ class MafiaNetMixin:
         return True
 
     def _broadcast_vote_done(self, voter, target):
-        """투표가 '접수됐다'만 알린다(대상은 싣지 않는다) — 화면뿐 아니라 패킷·로그로도 익명."""
+        """투표가 '접수됐다'만 알린다(대상은 싣지 않는다) — 화면뿐 아니라 패킷·로그로도 익명.
+        진행 안내 문구도 함께 보낸다: 예전에는 호스트 화면에만 "○○님 투표 접수"가 떠서, 원격 참가자는
+        다른 사람(특히 AI)의 투표가 이루어지는 걸 전혀 볼 수 없었다."""
         self._mafia_broadcast("vote", voter=voter, abstain=(target is None))
+        try:
+            pd, pt = self._vote_progress_counts()
+            who = f"{voter}(AI)님" if (self.core.players.get(voter) or {}).get("is_ai") else f"{voter}님"
+            self._mafia_sys_except(
+                f"🗳 {who} " + ("기권 접수" if target is None else "투표 완료 (익명 개표)") + f" · 진행률 {pd}/{pt}",
+                exclude=voter)
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
+    def _broadcast_defense_progress(self, voter):
+        """찬반(처형여부) 표가 접수될 때마다 진행 안내를 원격 참가자에게도 보낸다(찬반 내용은 비공개)."""
+        try:
+            who = f"{voter}(AI)님" if (self.core.players.get(voter) or {}).get("is_ai") else f"{voter}님"
+            self._mafia_sys_except(f"⚖ {who} 찬반 표 접수 (익명) · {self._defense_progress_text()}", exclude=voter)
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
+    def _mafia_sys_except(self, text, exclude=None):
+        """호스트 전용 — 시스템 안내(sys)를 모든 원격 참가자에게 보낸다. exclude(보통 방금 표를 낸 사람)는
+        자기 화면에 이미 안내가 떠 있으므로 뺀다."""
+        if not self._mafia_is_host():
+            return
+        from mafia_net import encode
+        pkt = encode("sys", text=text)
+        eng = getattr(self, "engine", None)
+        if not pkt or eng is None:
+            return
+        skip = None
+        if exclude:
+            try:
+                skip = self._mafia_peer_of(exclude)
+            except Exception:
+                skip = None
+        with eng.plock:
+            peers = list(eng.peers.keys())
+        for ip_port in peers:
+            if skip is not None and tuple(ip_port) == tuple(skip):
+                continue
+            try:
+                eng.send_message(ip_port[0], ip_port[1], pkt)
+            except Exception as _swallow_e:
+                applog.swallowed(_swallow_e)
 
     def _on_mafia_proto_msg(self, text, sender_name, peer=None):
         """[MAFIA1] 메시지 수신시. 송신자 검증을 통과한 것만 처리한다."""
@@ -467,6 +511,7 @@ class MafiaNetMixin:
                 self.add_mafia_bubble(say_text, name)
                 if self._mafia_is_host() and getattr(self, "ai", None):
                     self.ai.observe_all(name, say_text)
+                    self._ai_hear_human(name, say_text)   # 원격 참가자의 발언에도 AI가 반응한다
         elif t == "sys":
             self.add_mafia_system(ev.get("text", ""))
         elif t == "hdm":
@@ -887,6 +932,7 @@ class MafiaNetMixin:
             return
         self.core.cast_defense_vote(voter, bool(yes))
         self.add_mafia_system(f"⚖ {voter}님 찬반 표 접수 (익명) · {self._defense_progress_text()}")
+        self._broadcast_defense_progress(voter)
         self._maybe_resolve_defense(name)
 
     def _sync_ai_alive(self):

@@ -154,26 +154,65 @@ class MafiaAIChatMixin:
         self._mafia_broadcast("user_say", name=getattr(self.engine, "name", None), text=text)
         if getattr(self, "ai", None):
             self.ai.observe_all(self.engine.name, text)   # 모든 AI가 내 말을 기억
-        # v1.30 — 협박 발언 즉시 AI 불쾌 반응 (톤 감지 1회)
-        import re as _re2
+        self._ai_hear_human(self.engine.name, text)
+
+    def _ai_hear_human(self, speaker, text):
+        """사람 참가자의 발언에 AI가 반응하게 한다. 이 PC의 사용자든 원격 참가자든 똑같이 처리한다.
+        예전에는 호스트 사용자의 발언에만 반응하고 원격 참가자의 발언(user_say)은 화면에 표시·기억만
+        해서, AI들이 원격 참가자에게 관심도 없고 대화도 걸지 않았다."""
+        if not getattr(self, "ai", None) or not getattr(self, "core", None):
+            return
+        try:
+            self._human_last_talk = getattr(self, "_human_last_talk", None) or {}
+            self._human_last_talk[speaker] = time.time()
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
         _threat_kw = mafia_config.THREAT_KEYWORDS
         if self.core.phase in (Phase.DAY, Phase.VOTE) and any(k in text for k in _threat_kw):
-            import random as _rq
-            live = [pl for pl in getattr(self, "ai", None) and self.ai.players or []
-                    if pl.alive and getattr(pl, "booted", False)]
+            live = [pl for pl in self.ai.players if pl.alive and getattr(pl, "booted", False)]
             if live:
-                pick = _rq.choice(live)
-                self.root.after(600, lambda p=pick: self._ai_threat_reaction(p))
+                pick = random_mod.choice(live)
+                self.root.after(600, lambda p=pick, who=speaker: self._ai_threat_reaction(p, who))
         if self.core.phase == Phase.DAY:
             self._ai_chain_count = 0
             # 이름 직접 호출 → 불린 AI만 대답, 아니면 일반 상황 반응 1회
             mentioned = self._detect_mention(text)
             if mentioned:
-                self._trigger_mentions_reply(mentioned, text)
+                self._trigger_mentions_reply(mentioned, text, speaker)
             else:
                 self._trigger_ai_reactions(
-                    context=f"플레이어 '{self.engine.name}'의 발언: \"{text}\"",
+                    context=f"플레이어 '{speaker}'의 발언: \"{text}\"",
                     min_interval=5, max_replies=AI_REACT_MAX_REPLIES)
+
+    def _ai_ask_human(self):
+        """AI 한 명이 가장 오래 말이 없던 사람 참가자에게 먼저 말을 건다(사람 발언을 기다리지 않는다).
+        조용한 원격 참가자가 AI 대화에서 소외되지 않게 한다. 말을 걸었으면 True."""
+        if not (self.mafia_active and self.core.phase == Phase.DAY and getattr(self, "ai", None)):
+            return False
+        humans = [n for n, p in self.core.players.items()
+                  if not p.get("is_ai") and p.get("alive", True)]
+        if not humans:
+            return False
+        talk = getattr(self, "_human_last_talk", None) or {}
+        now = time.time()
+        target = min(humans, key=lambda n: talk.get(n, 0))
+        if now - talk.get(target, 0) < 20:
+            return False                      # 방금 말한 사람에게는 다시 걸 필요 없다
+        cands = [pl for pl in self.ai.players
+                 if pl.alive and getattr(pl, "booted", False) and not getattr(pl, "busy", False)]
+        if not cands:
+            return False
+        pl = random_mod.choice(cands)
+        alive = ", ".join(self.core.alive_players())
+        def factory(p):
+            return (f"[사람에게 말 걸기] 현재 낮 {self.core.day_no}, 생존: {alive}\n"
+                    f"'{p.name}'로서 사람 참가자 '{target}'님에게 직접 말을 거세요: 이름을 부르며 "
+                    f"지금까지의 대화·행동에 대한 질문을 하나 던지거나 의견을 물으세요. "
+                    f"2문장 이내, 혼잣말/규칙 설명 금지.\n" + self._NO_PILE_ON)
+        self._human_last_talk = talk
+        talk[target] = now - 10               # 연속으로 같은 사람만 조르지 않도록 살짝 갱신
+        self.ai.say_one_async(pl, factory)
+        return True
 
     def _detect_mention(self, text):
         """유저 메시지에 AI 이름이 직접 포함되면 해당 AI 목록. @이름/'OOO아' 포함."""
@@ -191,12 +230,13 @@ class MafiaAIChatMixin:
                 hits.append(pl)
         return hits or None
 
-    def _trigger_mentions_reply(self, mentioned, user_text):
+    def _trigger_mentions_reply(self, mentioned, user_text, speaker=None):
         """이름 불린 AI는 반드시 그 사람에게 대답(순차 지연 틈 후 비동기)."""
         alive = ", ".join(self.core.alive_players())
+        speaker = speaker or self.engine.name
         for idx, pl in enumerate(mentioned):
             factory = (lambda pl=pl: (
-                f"[직접 지목] '{self.engine.name}'님이 당신('{pl.name}')의 이름을 불렀습니다.\n"
+                f"[직접 지목] '{speaker}'님이 당신('{pl.name}')의 이름을 불렀습니다.\n"
                 f"발언: \"{user_text}\"\n"
                 f"그 사람에게 직접 대답하세요: 이름을 부르며 질문에 답하거나 태도를 밝히세요. "
                 f"2문장 이내.\n[참고] 현재 낮 {self.core.day_no}, 생존: {alive}"))
@@ -207,17 +247,17 @@ class MafiaAIChatMixin:
         if others and random_mod.random() < 0.5:
             pick = random_mod.choice(others)
             factory2 = (lambda pl=pick: (
-                f"[게임 상황] '{self.engine.name}' 님이 '{mentioned[0].name}'님에게 "
+                f"[게임 상황] '{speaker}' 님이 '{mentioned[0].name}'님에게 "
                 f"말했습니다: \"{user_text}\"\n"
                 f"당신('{pl.name}')은 그 대화에 곁에서 한마디만 보태세요. 2문장 이내."))
             self.root.after(1900, lambda f=factory2: self.ai.say_async(f))
 
-    def _ai_threat_reaction(self, pl):
+    def _ai_threat_reaction(self, pl, speaker=None):
         """v1.30 — 유저 협박 발언에 대한 AI 불쾌 반응 발화(1명, 1회).
         LLM 없이 인격 톤 문구 즉결 + AI 기억에 '협박' 사실 적립(투표/찬반 참조)."""
         import random as _rr2
         try:
-            me_u = getattr(self.engine, "name", "")
+            me_u = speaker or getattr(self.engine, "name", "")
             lines = [
                 f"갑자기 협박은 무슨 말이야? 차분히 얘기하죠, {me_u}님.",
                 f"말투가 좀 심하네… 겁먹겠다. 우리 진짜 투표는 진지하게 하쟈랑요.",
@@ -318,6 +358,8 @@ class MafiaAIChatMixin:
     def _ai_vs_ai_banter(self):
         """AI 한 명이 '다른 AI'를 지목해 캐묻고, 지목당한 AI가 받아치게 한다(사람 제외)."""
         if not (self.mafia_active and self.core.phase == Phase.DAY and getattr(self, "ai", None)):
+            return
+        if random_mod.random() < 0.4 and self._ai_ask_human():
             return
         cands = [pl for pl in self.ai.players
                  if pl.alive and getattr(pl, "booted", False) and not getattr(pl, "busy", False)]

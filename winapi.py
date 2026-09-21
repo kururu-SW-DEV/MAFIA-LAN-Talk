@@ -419,18 +419,7 @@ class Notifier:
             self._user32.FlashWindowEx.restype = wintypes.BOOL
             self._user32.FlashWindowEx.argtypes = [ctypes.POINTER(FLASHWINFO)]
 
-            base_dir = resource_dir()
-            ico_path = os.path.join(base_dir, "app.ico")
-            h_icon = None
-            if os.path.exists(ico_path):
-                try:
-                    self._user32.LoadImageW.restype = wintypes.HICON
-                    self._user32.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
-                                                       ctypes.c_int, ctypes.c_int, wintypes.UINT]
-                    h_icon = self._user32.LoadImageW(None, ico_path, IMAGE_ICON, 0, 0,
-                                                     LR_LOADFROMFILE | LR_DEFAULTSIZE)
-                except Exception:
-                    h_icon = None
+            h_icon = self._load_tray_icon()
             if not h_icon:
                 h_icon = self._user32.LoadIconW(None, ctypes.cast(IDI_APPLICATION, wintypes.LPCWSTR))
             self._h_icon = h_icon
@@ -461,6 +450,40 @@ class Notifier:
                     pass
         except Exception:
             self.ok = False
+
+    def _load_tray_icon(self):
+        """트레이용 아이콘 핸들. 트레이는 작은 아이콘(보통 16px, 배율이 높으면 20~24px) 크기를 쓴다.
+        예전엔 크기를 0(=기본 32px)으로 불러 축소돼 흐려 보였고, 단일 exe에는 app.ico 파일이 같이 들어
+        있지 않아(PyInstaller --icon은 exe 리소스에만 넣는다) 파일 로드가 실패하면 윈도우 기본 아이콘
+        (깨진 것처럼 보이는 흰 창 모양)으로 떨어졌다. 그래서 ① 파일 → ② exe에 내장된 아이콘 순으로 시도한다."""
+        try:
+            self._user32.GetSystemMetrics.restype = ctypes.c_int
+            size = int(self._user32.GetSystemMetrics(49)) or 16      # SM_CXSMICON
+        except Exception:
+            size = 16
+        ico_path = os.path.join(resource_dir(), "app.ico")
+        if os.path.exists(ico_path):
+            try:
+                self._user32.LoadImageW.restype = wintypes.HICON
+                self._user32.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
+                                                   ctypes.c_int, ctypes.c_int, wintypes.UINT]
+                h = self._user32.LoadImageW(None, ico_path, IMAGE_ICON, size, size, LR_LOADFROMFILE)
+                if h:
+                    return h
+            except Exception:
+                pass
+        if getattr(sys, "frozen", False):
+            try:
+                small = wintypes.HICON()
+                self._shell32.ExtractIconExW.argtypes = [wintypes.LPCWSTR, ctypes.c_int,
+                                                         ctypes.POINTER(wintypes.HICON),
+                                                         ctypes.POINTER(wintypes.HICON), wintypes.UINT]
+                self._shell32.ExtractIconExW.restype = wintypes.UINT
+                if self._shell32.ExtractIconExW(sys.executable, 0, None, ctypes.byref(small), 1) and small.value:
+                    return small
+            except Exception:
+                pass
+        return None
 
     def notify(self, title, message):
         if not self.ok or self._nid is None:
