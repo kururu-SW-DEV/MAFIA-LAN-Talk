@@ -525,14 +525,11 @@ class MafiaVoteMixin:
             return
         if not self.mafia_active or self.core.phase not in (Phase.DAY, Phase.VOTE):
             return
-        try:
-            if getattr(self, "_tally_in_progress", False):
-                return
-            self._tally_in_progress = True
-        except Exception as _swallow_e:
-            applog.swallowed(_swallow_e)
+        # _tally_in_progress는 _tally_and_reveal이 스스로 잡고 푼다 — 여기서 미리 True로 만들면
+        # _tally_and_reveal의 첫 가드에 걸려 안전망 개표가 영영 실행되지 않는다.
+        if getattr(self, "_tally_in_progress", False) or getattr(self, "_tally_scheduled", False):
+            return
         self._tally_and_reveal()
-        self.root.after(2500, lambda: setattr(self, "_tally_in_progress", False))
 
     def _update_vote_btn_state(self):
         me = getattr(self.engine, "name", None)

@@ -22,6 +22,7 @@ except ImportError:  # pragma: no cover - 표준 라이브러리라 사실상 �
 
 from constants import *  # noqa: F401,F403 - 색상/폰트/레이아웃 상수 전체 사용
 from constants import _ICON_PNG_B64
+import applog
 from netutils import (default_datadir, default_name, korea_time_str, sanitize_chat_text,
                        get_clipboard_image_bytes, get_clipboard_files)
 from canvas_utils import round_rect, smooth_circle_photo, bind_scoped_mousewheel
@@ -2552,6 +2553,16 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
             self._select(key)
 
     def _pump(self):
+        """이벤트 펌프. 한 이벤트 처리가 예외를 내도 다음 틱을 반드시 다시 예약한다 — 안 그러면
+        창은 살아 있는데 수신·전송 이벤트만 영영 처리되지 않는다(윈도우 exe는 stderr도 안 보인다)."""
+        try:
+            self._pump_body()
+        except Exception as _e:
+            applog.swallowed(_e)
+        finally:
+            self.root.after(80, self._pump)
+
+    def _pump_body(self):
         if getattr(self, "_dropped_files_queue", None):
             files = list(self._dropped_files_queue)
             self._dropped_files_queue.clear()
@@ -2637,7 +2648,6 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
                 self._refresh_me_avatar()
             elif kind == "search_results":
                 self._apply_search_results(ev["gen"], ev["q"], ev["results"])
-        self.root.after(80, self._pump)
 
     # ---------- 칸 비우기 ----------
     def _show_empty(self, msg):

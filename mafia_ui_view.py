@@ -69,10 +69,17 @@ class MafiaViewMixin:
         panel, body, close = self._make_embed_dialog(title_text, w, h)
         def _on_close():
             self._mafia_overlay = None
+            self._mafia_overlay_cleanup()
             close()
         self._mafia_overlay = panel
         self._mafia_overlay_close = _on_close
         return body
+
+    def _mafia_overlay_cleanup(self):
+        """오버레이가 닫힐 때 유령방 UI 참조를 끊는다(닫힌 위젯을 계속 만지면 TclError, 300ms 폴러도 안 멈춤)."""
+        self._ghost_ui_open = False
+        self._ghost_list = None
+        self._ghost_ent = None
 
     def _mafia_overlay_close(self, *a):
         f = getattr(self, "_mafia_overlay", None)
@@ -80,7 +87,7 @@ class MafiaViewMixin:
             f.destroy()
         self._mafia_overlay = None
         # v1.17 — 유령방 UI 큐 폴러 정지(유령방 닫힘)
-        self._ghost_ui_open = False
+        self._mafia_overlay_cleanup()
 
     def _reopen_role_popup(self):
         """상단 바 버튼 클릭 시 직업 안내 팝업을 다시 띄운다."""

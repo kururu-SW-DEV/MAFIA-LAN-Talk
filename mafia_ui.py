@@ -57,6 +57,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         prev_close = getattr(self, "_mafia_overlay_close", None)
         def _on_close():
             self._mafia_overlay = None
+            self._mafia_overlay_cleanup()
             close()
         self._mafia_overlay = panel
         self._mafia_overlay_close = _on_close
@@ -504,6 +505,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             self._mafia_broadcast("end", winner=winner, roles={
                 n: p.get("role") for n, p in self.core.players.items()})
         self._cancel_mafia_timer()
+        self._mafia_stop_disconnect_watch()
         self.core.phase = Phase.END
         label = "시민" if winner == "citizen" else "마피아"
         emoji = "🎉" if winner == "citizen" else "🩸"

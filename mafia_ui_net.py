@@ -107,7 +107,7 @@ class MafiaNetMixin:
         self._mafia_room_close()
         self._play_mafia_sound("citizen_win" if winner == "citizen" else "mafia_win")
         self.add_mafia_system(f"⚖ 게임 종료 — {label} 팀 승리!")
-        if roles:
+        if roles and isinstance(roles, dict):
             reveals = ", ".join(f"{n}({ROLE_LABEL_KR.get(r, '?')})" for n, r in roles.items())
             self.add_mafia_system(f"🎭 정체 공개 — {reveals}")
         try:
@@ -264,6 +264,41 @@ class MafiaNetMixin:
 
     _STALE_GAME_SECONDS = 180      # 방장에게서 이 시간 넘게 아무 패킷도 없고 접속 목록에도 없으면 판이 끝난 것으로 본다
 
+    @staticmethod
+    def _name_list(v):
+        """패킷으로 온 명단을 문자열 이름 목록으로만 정규화(잘못된 값은 버린다)."""
+        if not isinstance(v, (list, tuple)):
+            return []
+        return [n for n in v if isinstance(n, str) and n][:MAX_PLAYERS]
+
+    def _arm_client_defense_guard(self):
+        """원격 참가자 안전망 — 방장이 판결(verdict)을 못 보내고 사라져도 변론 중 발언 잠금이 영영 안 풀리는 일을 막는다."""
+        self._cancel_client_defense_guard()
+        self._defense_client_guard = self.root.after(
+            (60 + DEFENSE_VOTE_WINDOW + 15) * 1000, self._client_defense_timeout)
+
+    def _cancel_client_defense_guard(self):
+        t = getattr(self, "_defense_client_guard", None)
+        if t:
+            try:
+                self.root.after_cancel(t)
+            except Exception as _swallow_e:
+                applog.swallowed(_swallow_e)
+        self._defense_client_guard = None
+
+    def _clear_client_defense(self):
+        self._cancel_client_defense_guard()
+        self._defense_in_progress = False
+
+    def _client_defense_timeout(self):
+        self._defense_client_guard = None
+        if self._mafia_is_host() or not getattr(self, "_defense_in_progress", False):
+            return
+        self._defense_in_progress = False
+        self.core.defendant = None
+        self._unlock_defense_entry()
+        self.add_mafia_system("⚠ 방장의 판결 결과가 오지 않아 변론 화면을 정리했습니다.")
+
     def _clear_stale_host_state(self):
         """새 모집 알림을 받기 전에, 지난 판이 비정상적으로 끝나 남은 상태를 걷어낸다.
         남아 있으면 이 PC가 아직 방장이거나 진행 중인 판이 있다고 믿어 새 방장의 모집 알림을
@@ -358,6 +393,8 @@ class MafiaNetMixin:
         except Exception:
             return False
         t = ev.get("t")
+        if t in ("verdict", "night", "day", "end") and not self._mafia_is_host():
+            self._clear_client_defense()
         if not self._proto_authorized(t, ev, sender_name, peer):
             try:
                 import applog
@@ -384,7 +421,7 @@ class MafiaNetMixin:
             elif (t in ("night", "day", "death", "tally", "vote", "vote_open", "revote_open",
                         "defense_vote_open", "defense_start", "verdict", "end",
                         # 사회자·AI·참가자의 게임 중 대화도 참가하지 않은 사람에게는 보이면 안 된다
-                        "hsay", "asay", "sys", "user_say", "ghost_say", "mafia_say")
+                        "hsay", "asay", "sys", "user_say", "ghost_say", "mafia_say", "lobby_chat")
                   and not getattr(self, "_in_game", True)):
                 return True
         if t == "hsay":
@@ -421,6 +458,11 @@ class MafiaNetMixin:
             # 원격 발언을 AI가 전혀 인식 못했음).
             name = ev.get("name") or "?"
             say_text = ev.get("text", "")
+            if not isinstance(say_text, str):
+                return True
+            _info = (self.core.players.get(name) or {}) if getattr(self, "core", None) else {}
+            if self.mafia_active and (not _info or _info.get("is_ai") or not _info.get("alive", True)):
+                return True        # 참가자가 아니거나 이미 사망한 사람의 발언은 버린다(AI 기억 오염 방지)
             if say_text:
                 self.add_mafia_bubble(say_text, name)
                 if self._mafia_is_host() and getattr(self, "ai", None):
@@ -476,7 +518,7 @@ class MafiaNetMixin:
                                 nm, is_ai = entry.get("name"), bool(entry.get("is_ai"))
                             else:
                                 nm, is_ai = entry, False   # 구버전 호환(문자열 명단)
-                            if nm and nm not in self.core.players:
+                            if isinstance(nm, str) and nm and nm not in self.core.players:
                                 self.core.join(nm, is_ai=is_ai)
                         self.core.phase = Phase.DAY
                         self.core.day_no = 1
@@ -569,7 +611,9 @@ class MafiaNetMixin:
                 self._client_game_end(ev.get("winner"), ev.get("roles") or {})
         elif t == "defense_start":
             self.core.defendant = ev.get("name")
+            self._defense_in_progress = True
             self._start_defense_visuals(ev.get("name", "피고인"))
+            self._arm_client_defense_guard()
         elif t == "verdict":
             # v1.61 — 처형 확정이면 원격 core에서도 사망 처리 + 본인이면 유령방
             vname, vrole = ev.get("name"), ev.get("role")
@@ -622,10 +666,11 @@ class MafiaNetMixin:
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
         elif t == "recruit_start":
-            host = ev.get("host", "방장")
+            host = ev.get("host")
+            host = host if isinstance(host, str) and host else "방장"
             self._recruiting = True
             self._recruiter_host = host
-            self._recruited_humans = list(ev.get("players", []))
+            self._recruited_humans = self._name_list(ev.get("players"))
             me = getattr(self.engine, "name", None)
             self._my_joined = (me in self._recruited_humans)
             if host != me:
@@ -677,7 +722,7 @@ class MafiaNetMixin:
                     self.mafia_start_btn.config(text=f"🎮 게임 시작 (인간 {len(self._recruited_humans)}명)")
                     self._mafia_broadcast("recruit_update", host=me, players=self._recruited_humans)
         elif t == "recruit_update":
-            self._recruited_humans = list(ev.get("players", []))
+            self._recruited_humans = self._name_list(ev.get("players"))
             me = getattr(self.engine, "name", None)
             self._my_joined = (me in self._recruited_humans)
             if hasattr(self, "mafia_join_btn") and getattr(self, "_recruiter_host", None) != me:
@@ -704,12 +749,33 @@ class MafiaNetMixin:
             sender = ev.get("sender", "알 수 없음")
             msg_text = ev.get("text", "")
             me = getattr(self.engine, "name", None)
+            if getattr(self, "mafia_active", False):
+                return True        # 게임 중 로비 채팅은 참가하지 않은 사람의 발언 — 게임방에 넣지 않는다
             if sender != me and msg_text:
                 self.add_mafia_bubble(msg_text, sender)
         return True
 
+    def _mafia_stop_disconnect_watch(self):
+        """판이 끝나면 접속 감시 예약을 취소한다(단계마다 부르는 _cancel_mafia_timer에는 넣지 않는다 —
+        넣으면 낮/밤이 바뀔 때마다 감시가 멈춘다)."""
+        t = getattr(self, "_disconnect_watch_timer", None)
+        if t:
+            try:
+                self.root.after_cancel(t)
+            except Exception as _swallow_e:
+                applog.swallowed(_swallow_e)
+        self._disconnect_watch_timer = None
+
     def _mafia_start_disconnect_watch(self):
-        """게임 시작 시 1회 호출 — 이후 mafia_active인 동안 스스로 재예약되며 계속 돈다."""
+        """게임 시작 시 1회 호출 — 이후 mafia_active인 동안 스스로 재예약되며 계속 돈다.
+        이전 판의 예약이 남아 있으면 먼저 취소해 감시 루프가 둘이 되지 않게 한다."""
+        t = getattr(self, "_disconnect_watch_timer", None)
+        if t:
+            try:
+                self.root.after_cancel(t)
+            except Exception as _swallow_e:
+                applog.swallowed(_swallow_e)
+            self._disconnect_watch_timer = None
         self._mafia_poll_disconnects()
 
     def _mafia_poll_disconnects(self):
@@ -766,7 +832,8 @@ class MafiaNetMixin:
         for attr in ("_mafia_timer", "_day_tick", "_night_tick", "_ai_vote_timer",
                      "_force_tally_timer", "_revote_deadline", "_defense_deadline",
                      "_defense_end_timer", "_defense_fallback_timer", "_defense_popup10",
-                     "_tick_vote", "_defense_vote_tick", "_night_pick_tick"):
+                     "_tick_vote", "_defense_vote_tick", "_night_pick_tick",
+                     "_defense_client_guard", "_defense_ticker"):
             t = getattr(self, attr, None)
             if t:
                 try:

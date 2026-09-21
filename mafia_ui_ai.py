@@ -340,6 +340,12 @@ class MafiaAIChatMixin:
                         if (self.mafia_active and self.core.phase == Phase.DAY and b.alive) else None)
 
     def _on_ai_utt(self, name, color, text):
+        # LLM 응답은 수~수십 초 뒤에 오므로 그 사이 죽었거나 다음 판으로 넘어간 AI의 발언은 버린다.
+        core = getattr(self, "core", None)
+        if self.mafia_active and core is not None:
+            info = core.players.get(name)
+            if not info or not info.get("is_ai") or not info.get("alive", True):
+                return
         self.root.after(0, lambda: self.add_mafia_ai(name, text))
         # 다른 AI들도 이 발언을 기억(대화 맥락 유지)
         if getattr(self, "ai", None):

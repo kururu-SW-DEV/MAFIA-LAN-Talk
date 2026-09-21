@@ -692,6 +692,13 @@ class MafiaSecretMixin:
         box = getattr(self, "_ghost_list", None)
         if not box:
             return
+        try:
+            if not box.winfo_exists():
+                self._ghost_list = None
+                return
+        except Exception:
+            self._ghost_list = None
+            return
         log = getattr(self, "_ghost_log", None)
         if log is None:
             log = self._ghost_log = []
