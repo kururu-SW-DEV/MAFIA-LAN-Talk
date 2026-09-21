@@ -23,6 +23,7 @@ except ImportError:  # pragma: no cover - 표준 라이브러리라 사실상 �
 from constants import *  # noqa: F401,F403 - 색상/폰트/레이아웃 상수 전체 사용
 from constants import _ICON_PNG_B64
 import applog
+import tk_thread_safe
 from netutils import (default_datadir, default_name, korea_time_str, sanitize_chat_text,
                        get_clipboard_image_bytes, get_clipboard_files)
 from canvas_utils import round_rect, smooth_circle_photo, bind_scoped_mousewheel
@@ -107,6 +108,7 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
 
     def __init__(self, root, args, extra_peers):
         self.root = root
+        tk_thread_safe.install(root)   # 다른 스레드의 GC가 Tk 소멸자를 불러 UI가 교착되는 것을 막는다(응답 없음 원인)
         self.datadir = args.datadir or default_datadir()
         self.args = args
         self.extra_peers = extra_peers
