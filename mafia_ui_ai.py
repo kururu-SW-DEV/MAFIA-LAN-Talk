@@ -123,7 +123,6 @@ class MafiaAIChatMixin:
                     # v1.47 — 대상 이름을 내 말풍선에도 남기지 않는다(익명 개표와 완전히 일치시켜
                     # '정말 비공개 맞나' 하는 의심을 원천 차단). 자기 자신은 로컬에서만 보이는
                     # 화면이라 실제로 새어나간 적은 없지만, 눈에 보이는 문구부터 통일한다.
-                    self.add_mafia_bubble("투표 완료 (익명 개표)", "나", mine=True)
                     _pd, _pt = self._vote_progress_counts()
                     self.add_mafia_system(f"🗳 {me}님 투표 접수 완료 (익명 개표) · 진행률 {_pd}/{_pt}")
                     self._refresh_vote_progress_label()

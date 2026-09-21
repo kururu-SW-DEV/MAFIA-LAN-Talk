@@ -460,7 +460,6 @@ class MafiaVoteMixin:
                     try: self._vote_abstain_btn.config(bg=M_HOST, fg="white", text="✓ 기권", state="disabled")
                     except Exception as _swallow_e:
                         applog.swallowed(_swallow_e)
-                self.add_mafia_bubble("투표 기권", "나", mine=True)
                 _pd, _pt = self._vote_progress_counts()
                 self.add_mafia_system(f"🗳 {me} 기권 접수 · 진행률 {_pd}/{_pt}")
                 self._refresh_vote_progress_label()
@@ -486,7 +485,6 @@ class MafiaVoteMixin:
                     try: self._vote_abstain_btn.config(state="disabled")
                     except Exception as _swallow_e:
                         applog.swallowed(_swallow_e)
-                self.add_mafia_bubble("투표 완료 (익명 개표)", "나", mine=True)   # v1.47 — 대상 비노출
                 _pd, _pt = self._vote_progress_counts()
                 self.add_mafia_system(f"🗳 {me}님 투표 접수 완료 (익명 개표) · 진행률 {_pd}/{_pt}")
                 self._refresh_vote_progress_label()
@@ -736,7 +734,6 @@ class MafiaVoteMixin:
             else:
                 self.core.cast_abstain(me)
             # v1.47 — 대상 비노출(재투표도 본투표와 동일하게 익명 유지)
-            self.add_mafia_bubble("재투표 완료" if name else "기권", "나", mine=True)
             _pd, _pt = self._vote_progress_counts()
             self.add_mafia_system(f"🗳 {me}님 재투표 접수 완료 (익명 개표) · 진행률 {_pd}/{_pt}")
             if self._mafia_is_host():
@@ -1077,7 +1074,6 @@ class MafiaVoteMixin:
             return
         self.core.cast_defense_vote(me, yes)
         # v1.47 — 찬반 투표도 본투표와 동일하게 완전 익명(누가 찬성/반대인지 비공개).
-        self.add_mafia_bubble("찬반 투표 완료 (익명)", "나", mine=True)
         self._mafia_overlay_close()
         if self._mafia_is_host():
             self.add_mafia_system(f"⚖ {me}님 찬반 표 접수 (익명) · {self._defense_progress_text()}")
