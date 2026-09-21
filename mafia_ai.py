@@ -235,13 +235,27 @@ _LEAK_PATTERNS = (
 )
 
 
+# 경찰·의사 AI가 공개 채팅에 쓰면 안 되는 표현(신분 커밍아웃·조사/보호 사실). 마피아의 '거짓' 커밍아웃은 role이
+# mafia라 이 목록에 걸리지 않는다. 마피아가 아님을 편드는 말("OO님은 마피아 아닌 것 같아요")도 걸리지 않는다.
+_POLICE_LEAK_PATTERNS = (
+    r"(?<![가-힣])(?:나|저|제가|나는|난|내가)\s*(?:진짜\s*)?경찰",
+    r"조사(?:해|했|하니|해보니|한\s*결과|\s*결과)",
+    r"(?:확인|검사)(?:했|해봤|해보니)",
+)
+_DOCTOR_LEAK_PATTERNS = (
+    r"(?<![가-힣])(?:나|저|제가|나는|난|내가)\s*(?:진짜\s*)?의사",
+    r"(?:지켰|보호했|살렸|구했)",
+)
+
+
 def strip_secret_leaks(text, role=None):
-    """문장 단위로 비밀 누설 표현이 든 문장을 제거한다. 마피아 AI에만 적용(시민 AI가
-    '저 마피아 아니에요'라고 말하는 것은 정상이라 건드리지 않는다). 다 지워지면 빈 문자열."""
-    if not text or role != "mafia":
+    """문장 단위로 비밀 누설 표현이 든 문장을 제거한다. 마피아(비밀 대화·동료 언급), 경찰(신분·조사 결과), 의사(신분·보호
+    사실) AI에 적용한다 — 시민 AI가 '저 마피아 아니에요'라고 말하는 것은 정상이라 건드리지 않는다. 다 지워지면 빈 문자열."""
+    pats = {"mafia": _LEAK_PATTERNS, "police": _POLICE_LEAK_PATTERNS, "doctor": _DOCTOR_LEAK_PATTERNS}.get(role)
+    if not text or not pats:
         return text
     parts = re.split(r"(?<=[.!?~ㅋㅠ…])\s+|[\r\n]+", text)
-    kept = [p for p in parts if p.strip() and not any(re.search(pt, p) for pt in _LEAK_PATTERNS)]
+    kept = [p for p in parts if p.strip() and not any(re.search(pt, p) for pt in pats)]
     return " ".join(kept).strip()
 
 

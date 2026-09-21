@@ -41,6 +41,9 @@ def make_garbage():
     holder["self"] = holder
     holder["img"] = ImageTk.PhotoImage(Image.new("RGB", (8, 8), (255, 0, 0)), master=root)
     holder["var"] = tk.StringVar(master=root, value="x")
+    import tkinter.font as _tkfont
+    holder["font"] = _tkfont.Font(root=root, family="Arial", size=9)
+    result["fname"] = holder["font"].name
     result["name"] = str(holder["img"])
     result["vname"] = str(holder["var"])
 
@@ -69,6 +72,7 @@ if INSTALL:
     names = root.tk.call("image", "names")
     check("지연된 정리가 메인 스레드에서 이미지를 삭제함", result["name"] not in [str(n) for n in names])
     check("지연 목록이 비워짐", len(tk_thread_safe._pending) == 0)
+    check("tkinter.font.Font도 지연 정리됨(같은 교착 위험)", result["fname"] not in [str(n) for n in root.tk.splitlist(root.tk.call("font", "names"))])
 root.destroy()
 print("TK THREAD DEADLOCK", "PASSED" if ALL else "FAILED")
 sys.exit(0 if ALL else 1)

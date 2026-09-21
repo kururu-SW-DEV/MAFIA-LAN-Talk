@@ -232,7 +232,7 @@ class MafiaNightMixin:
                         pl_police.add_intel(inv, res)      # 영구 기록 — 이후 발언·투표에 활용
                     pl_police.memory.append(
                         {"role": "user",
-                         "content": f"[사회자 밤 비밀 통보] "
+                         "content": f"[사회자 밤 비밀 통보 — 절대 채팅에 노출 금지] "
                                     f"조사 결과: {inv} = {verdict}"})
             save_t = results.get("save")
             if save_t and not self.core.night_saved:
@@ -684,7 +684,7 @@ class MafiaNightMixin:
                     pl_police.add_intel(victim_t, res)
                 pl_police.memory.append(
                     {"role": "user",
-                     "content": f"[사회자 밤 비밀 통보] "
+                     "content": f"[사회자 밤 비밀 통보 — 절대 채팅에 노출 금지] "
                                 f"조사 결과: {victim_t} = {verdict}"})
             self.core.police_report = None
         winner = self.core.check_winner()

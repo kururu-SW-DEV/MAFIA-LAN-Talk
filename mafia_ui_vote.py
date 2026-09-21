@@ -869,9 +869,17 @@ class MafiaVoteMixin:
             c = self.core
             defendant = c.defendant
             ver = c.players.get(defendant, {}).get("role")
-            if pl.role == "police" and defendant in c.police_invest:
-                known = c.police_invest[defendant]
-                yes = (known == "mafia")
+            known_maf = pl.known_mafia_alive() if hasattr(pl, "known_mafia_alive") else []
+            known_cit = pl.known_citizens_alive() if hasattr(pl, "known_citizens_alive") else []
+            police_claims = pl.public_police_claims() if hasattr(pl, "public_police_claims") else []
+            if pl.role == "police" and (defendant in c.police_invest or defendant in known_maf):
+                yes = (c.police_invest.get(defendant) == "mafia") or (defendant in known_maf)
+            elif pl.role == "police" and defendant in known_cit:
+                yes = False
+            elif pl.role == "doctor" and defendant in known_maf:
+                yes = True                      # 나 말고 의사를 자처한 사람 — 확실한 마피아
+            elif pl.role == "doctor" and defendant in police_claims:
+                yes = False                     # 진짜 경찰일 수 있는 사람은 처형하지 않는다
             elif pl.role == "mafia":
                 if ver == "mafia":
                     # 동료 마피아 변론: 기본적으로 살리기 위해 반대(만류) 투표 (85% 반대)

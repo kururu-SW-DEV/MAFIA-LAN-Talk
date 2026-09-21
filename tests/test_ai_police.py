@@ -164,6 +164,57 @@ app._apply_night_actions = _orig_apply
 share = sum(1 for k in kills if k == "영희") / max(1, len(kills))
 check(f"마피아 AI의 밤 기본 살해 대상이 대부분 경찰 자처자 ({share:.2f})", len(kills) >= 25 and share >= 0.8)
 
+# ---- Opus 리뷰 반영 ----
+s_ = mafia_ai.strip_secret_leaks
+check("경찰 AI가 조사 결과를 흘리면 그 문장이 제거됨", s_("내가 조사해보니 미나가 마피아야", "police") == "")
+check("경찰 AI가 신분을 밝히면 제거됨('나 경찰이야')", s_("나 경찰이야 ㅋㅋ", "police") == "")
+check("경찰 AI의 옹호 발언은 유지됨", s_("영희님은 마피아 아닌 것 같아요 말투가 자연스러웠어요", "police") != "")
+check("의사 AI가 보호 사실을 흘리면 제거됨", s_("어제 철수 지켰거든", "doctor") == "")
+check("의사 AI가 신분을 밝히면 제거됨('나 의사야')", s_("나 의사야 진짜로", "doctor") == "")
+check("의사 AI의 평범한 감싸기는 유지됨", s_("철수 왠지 믿음이 가는데", "doctor") != "")
+check("마피아의 거짓 커밍아웃은 그대로 통과(전략이므로)", "나 경찰이야" in s_("나 경찰이야 어젯밤 영희 조사했어", "mafia"))
+check("시민 AI는 필터 대상이 아님", s_("나 경찰이야 조사했어", "citizen") == "나 경찰이야 조사했어")
+
+app._police_claims = {}
+for txt in ("내가 경찰이라면 진작 말했지", "제가 경찰이라도 말 안 하죠", "내가 경찰이지 않을까 싶은데", "나 경찰이지만 말 못 해", "내가 경찰이었으면 좋겠다"):
+    app._note_police_claim("철수", txt)
+check("가정형·부정형 문장은 커밍아웃으로 기록되지 않음", "철수" not in app._police_claims)
+for txt in ("나 경찰이야", "제가 경찰입니다", "내가 경찰이라고", "나 경찰이거든요", "난 경찰이에요ㅋㅋ"):
+    app._police_claims = {}
+    app._note_police_claim("철수", txt)
+    check(f"진짜 커밍아웃은 계속 기록됨: {txt!r}", "철수" in app._police_claims)
+app._police_claims = {}
+
+# 찬반 표 일관성: 확인한 마피아·자처 가짜는 찬성, 확인한 시민은 반대
+core.phase = Phase.DAY
+core.players["미나"]["alive"] = True
+core.defendant = "미나"; core.defense_yes = {}
+cop.intel = {"영희": "citizen", "미나": "mafia"}
+app._maybe_resolve_defense = lambda n: None
+ys = []
+for _ in range(15):
+    core.defense_yes = {}
+    app._ai_defense_vote_fast(cop)
+    ys.append(core.defense_yes.get("레오"))
+check("경찰 AI는 확인한 마피아의 찬반 표에서 항상 찬성", all(v is True for v in ys))
+core.defendant = "영희"
+ys = []
+for _ in range(15):
+    core.defense_yes = {}
+    app._ai_defense_vote_fast(cop)
+    ys.append(core.defense_yes.get("레오"))
+check("경찰 AI는 확인한 시민의 찬반 표에서 항상 반대", all(v is False for v in ys))
+cop.intel = {}
+app._police_claims = {"철수": 2}
+core.defendant = "철수"
+ys = []
+for _ in range(15):
+    core.defense_yes = {}
+    app._ai_defense_vote_fast(cop)
+    ys.append(core.defense_yes.get("레오"))
+check("경찰 AI는 다른 경찰 자처자(가짜)의 찬반 표에서 항상 찬성", all(v is True for v in ys))
+app._police_claims = {}
+
 # 4) 새 판이면 조사 정보 초기화
 d.assign_roles({"레오": "police", "철수": "citizen"}, core)
 check("새 판이 시작되면 이전 조사 정보가 지워짐", cop.intel == {})

@@ -14,6 +14,7 @@ Tk는 다른 스레드의 호출을 메인 스레드 이벤트 루프가 처리�
 import collections
 import threading
 import tkinter
+import tkinter.font
 
 _pending = collections.deque()
 _installed = False
@@ -52,7 +53,7 @@ def install(root, interval_ms=300):
     global _installed
     if not _installed:
         _installed = True
-        for cls in (tkinter.Image, tkinter.Variable):
+        for cls in (tkinter.Image, tkinter.Variable, tkinter.font.Font):
             _wrap(cls)
         try:
             from PIL import ImageTk

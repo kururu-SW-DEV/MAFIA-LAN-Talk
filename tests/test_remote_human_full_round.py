@@ -71,7 +71,12 @@ try:
     check("원격 B 화면에도 AI들의 투표 진행이 표시됨(예전엔 호스트 화면에만 떴다)",
           pump(lambda: any("(AI)님 투표 완료" in (r.get("text") or "") for r in stubB.mafia_history), timeout=30))
     check("원격 B 화면에 호스트 사용자(A)의 투표 진행도 표시됨",
-          pump(lambda: b_sees(f"{a_nm}님 투표 완료"), timeout=10))
+          pump(lambda: b_sees(f"{a_nm}님 투표 접수 완료"), timeout=10))
+    pump(lambda: False, timeout=1.5)
+    dup = {n: sum(1 for r in stubB.mafia_history if f"{n}(AI)님 투표 완료" in (r.get("text") or "")) for n in ai_names}
+    check(f"AI 투표 진행 안내가 원격 화면에 정확히 한 번씩만 뜸(중복 없음) {dup}", all(v == 1 for v in dup.values()))
+    a_lines = [r for r in stubB.mafia_history if f"{a_nm}님 투표" in (r.get("text") or "")]
+    check(f"호스트 사용자의 투표 안내도 원격 화면에 한 번만 뜸 ({len(a_lines)}줄)", len(a_lines) == 1)
     check("전원(사람2+AI3) 투표 완료 → 실제 개표가 실행돼 최후 변론으로 넘어감",
           pump(lambda: appA.core.defendant == target or any("최후 변론" in t for t in A_sys), timeout=40))
     check("B 화면에도 변론 시작이 전달됨(defendant 동기화)",
@@ -89,8 +94,7 @@ try:
           pump(lambda: b_sees("방장이 내 찬반 표를 접수했습니다"), timeout=10))
     check("호스트 화면에 'B님 찬반 표 접수' 안내가 뜸", any(b_nm in t and "찬반" in t for t in A_sys))
     check("원격 B 화면에도 AI들의 찬반 표 진행이 표시됨",
-          pump(lambda: any("찬반 표 접수" in (r.get("text") or "") and "(AI)님" in (r.get("text") or "")
-                           for r in stubB.mafia_history), timeout=20))
+          pump(lambda: sum(1 for r in stubB.mafia_history if "찬반 표 접수" in (r.get("text") or "")) >= 2, timeout=20))
     appA._cast_defense(target, True) if hasattr(appA, "_cast_defense") else None
     check("찬반이 끝나 판결이 나고 B 화면에 판결이 전달됨",
           pump(lambda: stubB.core.defendant is None and (b_sees("처형") or b_sees("판결") or
@@ -138,6 +142,30 @@ try:
                        if isinstance(appA.core.night_targets, dict) else ai_target in appA.core.night_targets, timeout=10))
     for role, opened in results.items():
         check(f"{role} B: 원격 화면에 밤 행동 패널이 열림", opened)
+
+    # ============ 늦게 도착한 표: 호스트가 이유를 알려 주고, 클라이언트는 엉뚱한 버전 경고를 띄우지 않는다 ============
+    sent = []
+    _orig_priv = appA._mafia_send_private
+    appA._mafia_send_private = lambda name, typ, **kw: sent.append((name, typ, kw))
+    appA.core.phase = Phase.VOTE                                  # 개표가 이미 시작된 상태
+    appA._host_receive_vote_cast(b_nm, ai_names[2])
+    check("개표 시작 뒤 늦게 온 표에도 호스트가 '반영하지 못했습니다'라고 답함",
+          any(n == b_nm and t_ == "sys" and kw.get("text", "").startswith("✅ 방장이 내 투표를 받았지만 반영하지 못했습니다")
+              for n, t_, kw in sent))
+    sent.clear()
+    appA.core.defendant = None
+    appA._host_receive_defense_vote(b_nm, "아무개", True)
+    check("끝난 재판에 늦게 온 찬반 표에도 호스트가 답함",
+          any(n == b_nm and kw.get("text", "").startswith("✅ 방장이 내 찬반 표를 받았지만") for n, t_, kw in sent))
+    appA._mafia_send_private = _orig_priv
+    n_before = len(stubB.mafia_history)
+    stubB.core.phase = Phase.NIGHT
+    stubB._ack_pending = {"vote_cast": ({"voter": b_nm, "target": "x"}, 1)}
+    stubB._check_host_ack("vote_cast")
+    check("이미 밤으로 넘어갔으면 '접수 확인 없음' 경고를 띄우지 않음",
+          not any("접수했다는 확인이 없습니다" in (r.get("text") or "") for r in stubB.mafia_history[n_before:]))
+    stubB.core.phase = Phase.DAY
+    appA.core.phase = Phase.NIGHT
 
     # ============ 호스트가 표를 버리는 경우(버전 불일치·인증 실패 등): 투표자에게 경고가 떠야 한다 ============
     stubB._ACK_WAIT_MS = 300

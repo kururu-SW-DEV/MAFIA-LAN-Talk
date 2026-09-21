@@ -156,14 +156,15 @@ class MafiaAIChatMixin:
         self._ai_hear_human(self.engine.name, text)
 
     # "나 경찰이야 / 나 의사야" 같은 커밍아웃 — 부인("경찰 아니야")은 제외하고 문장 끝맺음까지 요구해 오탐을 줄인다.
+    # 끝맺음 뒤에 한글이 더 이어지면(이라면·이라도·이지만·이지 않을까 …) 가정·부정이라 커밍아웃이 아니다.
+    _CLAIM_TAIL = (r"(?:이야|야|이에요|에요|이예요|예요|입니다|임|이거든|거든|이다|이라고|라고"
+                   r"|인데|이니까|니까|이지|지|이라니까|라니까)(?:요)?(?![가-힣])(?!\s*않)")
     _POLICE_CLAIM_RE = re.compile(
-        r"(?:나|저|내가|제가|난|전)(?:는|은|가)?\s*(?:진짜\s*|바로\s*|사실\s*)?경찰"
-        r"(?:이야|야|이에요|에요|이예요|예요|입니다|임|이거든|거든|이다|이라고|라고|인데|이니까|니까|이지|지|이라니까|라니까|이란|란|이라|라)")
-    _POLICE_DENY_RE = re.compile(r"경찰(?:이|은)?\s*(?:아니|아냐|아님|아닌|아닙)")
+        r"(?:나|저|내가|제가|난|전)(?:는|은|가)?\s*(?:진짜\s*|바로\s*|사실\s*)?경찰" + _CLAIM_TAIL)
+    _POLICE_DENY_RE = re.compile(r"경찰(?:이|은|도|가)?\s*(?:아니|아냐|아님|아닌|아닙)")
     _DOCTOR_CLAIM_RE = re.compile(
-        r"(?:나|저|내가|제가|난|전)(?:는|은|가)?\s*(?:진짜\s*|바로\s*|사실\s*)?의사"
-        r"(?:이야|야|이에요|에요|이예요|예요|입니다|임|이거든|거든|이다|이라고|라고|인데|이니까|니까|이지|지|이라니까|라니까|이란|란|이라|라)")
-    _DOCTOR_DENY_RE = re.compile(r"의사(?:이|은)?\s*(?:아니|아냐|아님|아닌|아닙)")
+        r"(?:나|저|내가|제가|난|전)(?:는|은|가)?\s*(?:진짜\s*|바로\s*|사실\s*)?의사" + _CLAIM_TAIL)
+    _DOCTOR_DENY_RE = re.compile(r"의사(?:이|은|도|가)?\s*(?:아니|아냐|아님|아닌|아닙)")
 
     def _note_police_claim(self, speaker, text):
         """누군가 스스로 경찰/의사라고 밝히면 기록한다(마피아 AI의 표적, 의사 AI의 보호 대상, 진짜 경찰·의사 AI가 가짜를
@@ -280,7 +281,18 @@ class MafiaAIChatMixin:
         pl.bluffed = True
         self._bluff_count = getattr(self, "_bluff_count", 0) + 1
         self.ai.say_one_async(pl, lambda _p, _pr=prompt: _pr)
+        self.root.after(30_000, lambda p=pl: self._bluff_rollback(p))
         return True
+
+    def _bluff_rollback(self, pl):
+        """30초 안에 거짓 커밍아웃이 실제로 채팅에 나오지 않았으면(LLM 실패·busy 등) 횟수를 되돌린다 — 안 그러면 마피아가
+        둘뿐인 판에서 두 번 실패하는 것만으로 이 기능이 그 판 내내 꺼진다."""
+        if not getattr(pl, "bluffed", False):
+            return
+        if pl.name in (getattr(self, "_police_claims", None) or {}) or pl.name in (getattr(self, "_doctor_claims", None) or {}):
+            return                      # 실제로 커밍아웃이 기록됨 — 소모가 맞다
+        pl.bluffed = False
+        self._bluff_count = max(0, getattr(self, "_bluff_count", 0) - 1)
 
     def _ai_hear_human(self, speaker, text):
         """사람 참가자의 발언에 AI가 반응하게 한다. 이 PC의 사용자든 원격 참가자든 똑같이 처리한다.
@@ -324,8 +336,9 @@ class MafiaAIChatMixin:
         talk = getattr(self, "_human_last_talk", None) or {}
         now = time.time()
         target = min(humans, key=lambda n: talk.get(n, 0))
-        if now - talk.get(target, 0) < 20:
-            return False                      # 방금 말한 사람에게는 다시 걸 필요 없다
+        asked = self.__dict__.setdefault("_human_ask_ts", {})
+        if now - talk.get(target, 0) < 20 or now - asked.get(target, 0) < 60:
+            return False                      # 방금 말한 사람·방금 말을 건 사람에게는 다시 걸지 않는다
         cands = [pl for pl in self.ai.players
                  if pl.alive and getattr(pl, "booted", False) and not getattr(pl, "busy", False)]
         if not cands:
@@ -338,7 +351,7 @@ class MafiaAIChatMixin:
                     f"지금까지의 대화·행동에 대한 질문을 하나 던지거나 의견을 물으세요. "
                     f"2문장 이내, 혼잣말/규칙 설명 금지.\n" + self._NO_PILE_ON)
         self._human_last_talk = talk
-        talk[target] = now - 10               # 연속으로 같은 사람만 조르지 않도록 살짝 갱신
+        asked[target] = now                   # 같은 사람에게 60초 안에는 다시 걸지 않는다(발언 시각은 건드리지 않음)
         self.ai.say_one_async(pl, factory)
         return True
 

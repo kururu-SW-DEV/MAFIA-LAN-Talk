@@ -84,6 +84,8 @@ app._human_last_talk = {"나": time.time(), "친구": time.time() - 120}
 asked = app._ai_ask_human()
 check("4) 가장 오래 조용한 사람에게 AI가 먼저 말을 검", asked and len(one) == 1 and "'친구'" in prompts[0])
 one.clear()
+check("4) 방금 말을 건 사람에게는 60초 안에 다시 걸지 않음(쿨다운)", app._ai_ask_human() is False and not one)
+app._human_ask_ts = {}
 app._human_last_talk = {"나": time.time(), "친구": time.time()}
 check("4) 방금 말한 사람에게는 걸지 않음", app._ai_ask_human() is False and not one)
 

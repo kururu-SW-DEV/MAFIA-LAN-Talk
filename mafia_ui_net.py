@@ -192,6 +192,8 @@ class MafiaNetMixin:
         label = "찬반 표" if ev_type == "defense_vote_cast" else "투표"
         if tries >= 1 or not host:
             pend.pop(ev_type, None)
+            if getattr(self, "core", None) and self.core.phase not in (Phase.DAY, Phase.VOTE):
+                return                       # 이미 다음 단계로 넘어갔다 — 경고할 상황이 아니다
             self.add_mafia_system(
                 f"⚠ 방장이 내 {label}를 접수했다는 확인이 없습니다. 방장과 같은 버전(v1.76 이상)인지, "
                 "방장과 연결이 끊기지 않았는지 확인하세요. 방장 화면에 '접수'가 안 뜨면 집계되지 않은 것입니다.")
@@ -425,25 +427,13 @@ class MafiaNetMixin:
 
     def _broadcast_vote_done(self, voter, target):
         """투표가 '접수됐다'만 알린다(대상은 싣지 않는다) — 화면뿐 아니라 패킷·로그로도 익명.
-        진행 안내 문구도 함께 보낸다: 예전에는 호스트 화면에만 "○○님 투표 접수"가 떠서, 원격 참가자는
-        다른 사람(특히 AI)의 투표가 이루어지는 걸 전혀 볼 수 없었다."""
+        진행 안내 문구("○○님 투표 접수 완료 · 진행률")는 호스트의 add_mafia_system이 이미 전원에게 sys로 방송하므로 여기서
+        다시 보내지 않는다(v1.75가 같은 줄을 한 번 더 보내 원격 화면에 두 번 뜨던 것을 v1.82에서 제거)."""
         self._mafia_broadcast("vote", voter=voter, abstain=(target is None))
-        try:
-            pd, pt = self._vote_progress_counts()
-            who = f"{voter}(AI)님" if (self.core.players.get(voter) or {}).get("is_ai") else f"{voter}님"
-            self._mafia_sys_except(
-                f"🗳 {who} " + ("기권 접수" if target is None else "투표 완료 (익명 개표)") + f" · 진행률 {pd}/{pt}",
-                exclude=voter)
-        except Exception as _swallow_e:
-            applog.swallowed(_swallow_e)
 
     def _broadcast_defense_progress(self, voter):
-        """찬반(처형여부) 표가 접수될 때마다 진행 안내를 원격 참가자에게도 보낸다(찬반 내용은 비공개)."""
-        try:
-            who = f"{voter}(AI)님" if (self.core.players.get(voter) or {}).get("is_ai") else f"{voter}님"
-            self._mafia_sys_except(f"⚖ {who} 찬반 표 접수 (익명) · {self._defense_progress_text()}", exclude=voter)
-        except Exception as _swallow_e:
-            applog.swallowed(_swallow_e)
+        """(호환용 빈 함수) 찬반 표 접수 안내도 add_mafia_system이 이미 방송한다."""
+        return
 
     def _mafia_sys_except(self, text, exclude=None):
         """호스트 전용 — 시스템 안내(sys)를 모든 원격 참가자에게 보낸다. exclude(보통 방금 표를 낸 사람)는
@@ -955,6 +945,10 @@ class MafiaNetMixin:
         else:
             ok = self.core.cast_vote(voter, target) if target else self.core.cast_abstain(voter)
         if not ok:
+            # 개표가 이미 시작됐거나 대상이 사망한 경우 등 — 조용히 버리면 투표자는 "확인이 없다"는 엉뚱한 경고(버전 불일치)를 본다
+            if voter != getattr(self.engine, "name", None):
+                self._mafia_send_private(voter, "sys",
+                                         text="✅ 방장이 내 투표를 받았지만 반영하지 못했습니다 (이미 개표가 시작되었거나 대상이 사망)")
             return
         _pd, _pt = self._vote_progress_counts()
         if target:
@@ -975,9 +969,14 @@ class MafiaNetMixin:
         전원 완료면 호스트가 개표한다(개표 판정은 호스트 전용 권한)."""
         if not self._mafia_is_host() or not voter or voter not in self.core.players:
             return
+        _late = "✅ 방장이 내 찬반 표를 받았지만 반영하지 못했습니다 (이미 끝난 재판이거나 투표 자격 없음)"
         if getattr(self.core, "defendant", None) != name:
+            if voter != getattr(self.engine, "name", None):
+                self._mafia_send_private(voter, "sys", text=_late)
             return   # 이미 끝난 재판에 늦게 도착한 표
         if not (self.core.players.get(voter) or {}).get("alive", True):
+            if voter != getattr(self.engine, "name", None):
+                self._mafia_send_private(voter, "sys", text=_late)
             return
         self.core.cast_defense_vote(voter, bool(yes))
         self.add_mafia_system(f"⚖ {voter}님 찬반 표 접수 (익명) · {self._defense_progress_text()}")

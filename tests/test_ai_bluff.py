@@ -143,6 +143,25 @@ cd.clear()
 app._maybe_police_defend("영희", "영희 나는 아니야 수상하지 않아")
 check("본인이 자기변호하는 말에는 옹호하지 않음", not scheduled)
 
+# ---- 거짓 커밍아웃 롤백(LLM이 말하지 못한 경우) ----
+mafia_ui_ai.random_mod = type("R", (), {"random": staticmethod(lambda: 0.0), "choice": staticmethod(lambda x: x[0]),
+                                        "randint": staticmethod(lambda a, b: a)})
+app._police_claims = {}; app._doctor_claims = {}; app._bluff_count = 0
+for pl in d.players:
+    pl.bluffed = False
+said.clear()
+app._ai_mafia_bluff()
+who_pl = [p for p in d.players if p.name == said[0][0]][0]
+check("거짓 커밍아웃을 시작하면 횟수·표식이 소모됨", app._bluff_count == 1 and who_pl.bluffed)
+app._bluff_rollback(who_pl)        # 말이 채팅에 안 나온 채 30초가 지난 상황
+check("실제로 말하지 못했다면(기록 없음) 횟수와 표식이 되돌아옴", app._bluff_count == 0 and who_pl.bluffed is False)
+app._ai_mafia_bluff()
+who_pl = [p for p in d.players if p.name == said[-1][0]][0]
+app._note_police_claim(who_pl.name, "나 경찰이야 어제 조사했어")
+app._bluff_rollback(who_pl)
+check("커밍아웃이 실제로 기록됐다면 되돌리지 않음", app._bluff_count == 1 and who_pl.bluffed is True)
+mafia_ui_ai.random_mod = _REAL_RM
+
 try:
     root.destroy()
 except Exception:
