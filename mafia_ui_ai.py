@@ -156,12 +156,38 @@ class MafiaAIChatMixin:
             self.ai.observe_all(self.engine.name, text)   # 모든 AI가 내 말을 기억
         self._ai_hear_human(self.engine.name, text)
 
+    # "나 경찰이야" 같은 커밍아웃 — 부인("경찰 아니야")은 제외하고 문장 끝맺음까지 요구해 오탐을 줄인다.
+    _POLICE_CLAIM_RE = re.compile(
+        r"(?:나|저|내가|제가|난|전)(?:는|은|가)?\s*(?:진짜\s*|바로\s*|사실\s*)?경찰"
+        r"(?:이야|이에요|이예요|입니다|임|이거든|이다|이라고|인데|이니까|이지|이라니까|이란|이라)")
+    _POLICE_DENY_RE = re.compile(r"경찰(?:이|은)?\s*(?:아니|아냐|아님|아닌|아닙)")
+
+    def _note_police_claim(self, speaker, text):
+        """누군가 스스로 경찰이라고 밝히면 기록한다(마피아 AI가 그 사람을 표적으로 삼는다). 호스트 전용."""
+        if not (getattr(self, "mafia_host_mode", False) and isinstance(text, str) and speaker):
+            return
+        if self._POLICE_DENY_RE.search(text) or not self._POLICE_CLAIM_RE.search(text):
+            return
+        info = (getattr(self, "core", None) and self.core.players.get(speaker)) or None
+        if info and info.get("alive", True):
+            self.__dict__.setdefault("_police_claims", {})[speaker] = getattr(self.core, "day_no", 1)
+
+    def _live_police_claims(self):
+        """경찰을 자처했고 아직 살아 있으며 마피아 팀이 아닌 사람(마피아 AI의 표적 후보)."""
+        core = getattr(self, "core", None)
+        if core is None:
+            return []
+        mafias = set(core.mafias())
+        return [n for n in list(getattr(self, "_police_claims", {}))
+                if (core.players.get(n) or {}).get("alive", True) and n not in mafias]
+
     def _ai_hear_human(self, speaker, text):
         """사람 참가자의 발언에 AI가 반응하게 한다. 이 PC의 사용자든 원격 참가자든 똑같이 처리한다.
         예전에는 호스트 사용자의 발언에만 반응하고 원격 참가자의 발언(user_say)은 화면에 표시·기억만
         해서, AI들이 원격 참가자에게 관심도 없고 대화도 걸지 않았다."""
         if not getattr(self, "ai", None) or not getattr(self, "core", None):
             return
+        self._note_police_claim(speaker, text)
         try:
             self._human_last_talk = getattr(self, "_human_last_talk", None) or {}
             self._human_last_talk[speaker] = time.time()
@@ -389,6 +415,7 @@ class MafiaAIChatMixin:
             if not info or not info.get("is_ai") or not info.get("alive", True):
                 return
         self.root.after(0, lambda: self.add_mafia_ai(name, text))
+        self._note_police_claim(name, text)      # AI 경찰의 커밍아웃도 마피아 AI가 듣는다
         # 다른 AI들도 이 발언을 기억(대화 맥락 유지)
         if getattr(self, "ai", None):
             self.ai.observe_all(name, text)

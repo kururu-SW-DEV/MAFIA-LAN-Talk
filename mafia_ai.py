@@ -264,6 +264,68 @@ class PlayerAgent:
         self.att = max(5, min(95, int(att)))     # 공격성
         self.memory = []
         self.lock = threading.Lock()
+        self.intel = {}            # 경찰 AI가 밤 조사로 확인한 사실: 이름 -> "mafia" | "citizen" (기억 창과 무관하게 유지)
+        self.core_ref = None       # 생존·일차 확인용(호스트가 assign_roles에서 넣는다)
+        self.claims_fn = None      # 마피아 AI용: 공개적으로 "나 경찰이다"라고 밝힌 생존자 목록을 돌려주는 함수
+
+    # ---------- 경찰 AI의 조사 정보 ----------
+    def add_intel(self, target, result):
+        """밤 조사 결과를 영구 기록한다. 예전에는 채팅 기억(최근 12개만 참조)에 한 줄 적립할 뿐이라 몇 마디 뒤엔
+        잊었고, "절대 노출 금지"만 있어 조사 결과를 활용하는 행동(지목·투표·커밍아웃)이 전혀 없었다."""
+        if self.role == "police" and target and result in ("mafia", "citizen"):
+            self.intel[target] = result
+
+    def _alive(self, name):
+        core = self.core_ref
+        if core is None:
+            return True
+        return bool((core.players.get(name) or {}).get("alive", True))
+
+    def known_mafia_alive(self):
+        """조사로 확인한 마피아 중 아직 살아 있는 사람(자기 자신 제외)."""
+        if self.role != "police":
+            return []
+        return [n for n, r in self.intel.items() if r == "mafia" and n != self.name and self._alive(n)]
+
+    def police_claimants(self):
+        """(마피아 AI) 채팅에서 스스로 경찰이라고 밝혔고 아직 살아 있는 사람(나·동료 마피아 제외)."""
+        if self.role != "mafia" or self.claims_fn is None:
+            return []
+        try:
+            return [n for n in self.claims_fn() if n != self.name]
+        except Exception:
+            return []
+
+    def _mafia_intel_prompt(self):
+        cl = self.police_claimants()
+        if not cl:
+            return ""
+        return ("[마피아의 비밀 정보]" + chr(10) +
+                f"  · {', '.join(cl)}이(가) 채팅에서 '나는 경찰'이라고 밝혔습니다. 진짜 경찰일 가능성이 높아 마피아에게 가장 위험한 사람입니다." + chr(10) +
+                "  - 그 사람을 시민들 앞에서 믿을 수 없다고 몰아가세요(예: '갑자기 경찰이라니 타이밍이 너무 수상한데?', '증거도 없이 커밍아웃하면 다 믿어야 해?')." + chr(10) +
+                "  - 단, 내가 마피아라는 것·마피아 동료·밤 계획은 절대 말하지 말고 시민인 척 자연스럽게 의심하세요. 밤 살해 대상과 투표는 그 사람을 우선합니다." + chr(10))
+
+    def _intel_prompt(self):
+        if self.role != "police" or not self.intel:
+            return ""
+        mafs = self.known_mafia_alive()
+        cits = [n for n, r in self.intel.items() if r == "citizen" and self._alive(n)]
+        if not mafs and not cits:
+            return ""
+        day = getattr(self.core_ref, "day_no", 1) if self.core_ref is not None else 1
+        lines = ["[경찰의 비밀 정보 — 내가 밤 조사로 직접 확인한 사실]"]
+        if mafs:
+            lines.append(f"  · 마피아로 확인됨(생존): {', '.join(mafs)}")
+        if cits:
+            lines.append(f"  · 마피아가 아님으로 확인됨(생존): {', '.join(cits)}")
+        if mafs:
+            lines.append("  - 마피아로 확인된 사람을 토론에서 수상하다고 계속 짚고 투표도 그 사람에게 하세요. 확신을 갖되 말투는 가볍게.")
+            lines.append(f"  - 지금은 {day}일차입니다. 첫날엔 '왠지 저 사람이 걸린다' 정도로 은근히 몰고, 2일차 이후이거나 누가 나를 의심하거나"
+                         " 토론이 다른 사람에게 쏠릴 때는 \"나 경찰이야, ○○ 조사했더니 마피아였어\"라고 **커밍아웃해도 됩니다**"
+                         "(이때만 내 역할과 조사 결과를 말해도 됨. 조사 결과를 지어내거나 조사 안 한 사람을 말하지 말 것).")
+        if cits:
+            lines.append("  - 마피아가 아님으로 확인된 사람이 몰리면 근거를 대며 변호하세요(이유는 '왠지 믿음이 간다' 식으로 가볍게, 커밍아웃 시엔 조사했다고 말해도 됨).")
+        return "\n".join(lines) + "\n"
 
     # ---------- 세션 부트스트랩(최초 1회, ~2초) ----------
     def start_bootstrap(self, host_name, players_desc):
@@ -292,7 +354,9 @@ class PlayerAgent:
             sys_prompt = (
                 "/no_thinking\n"
                 f"당신은 마피아 게임 참가자 '{self.name}'입니다. 성격은: {self.persona}.\n"
-                f"역할: {self.role or '미정'} — 역할명은 절대 말하지 말고 역할에 맞게 행동하세요.\n"
+                + ((f"역할: {self.role or '미정'} — 역할에 맞게 행동하세요.\n" + self._intel_prompt())
+                   if self._intel_prompt() else
+                   f"역할: {self.role or '미정'} — 역할명은 절대 말하지 말고 역할에 맞게 행동하세요.\n" + self._mafia_intel_prompt()) +
                 "[중요] 당신은 채팅에 있는 다른 플레이어들과 **대화**하고 있습니다.\n"
                 "  - 들어온 프롬프트에 특정 발언이 있으면 그 말에 **직접 대답**하세요.\n"
                 "  - 사람 이름을 불러 대화하세요. 질문이 오면 답하세요.\n"
@@ -302,7 +366,7 @@ class PlayerAgent:
                 "    다른 관점을 덧대거나 변호하라.\n"
                 "  - 외국어·한자·번역투 금지 — 실제 한국 단체 카톡방 구어체만.\n"
                 "  - 의심을 바꿀 때는 이유를 붙여라(급격한 태세전환 금지).\n"
-                "  - 비밀 정보(내 역할/전략)는 절대 채팅에 쓰지 마라.\n"
+                "  - 비밀 정보(내 역할/전략)는 절대 채팅에 쓰지 마라(단, [경찰의 비밀 정보]에서 허용한 커밍아웃은 예외).\n"
                 "  - [말투] 친구들끼리 노는 편안한 분위기로. 따지거나 추궁하는 어투, 논리·근거를\n"
                 "    나열하는 발표식 말투, 상대 발언을 조목조목 반박하는 말투는 피하고, 의심은\n"
                 "    '왠지 좀 그래 보여~' 같은 가벼운 느낌으로 말하라. 리액션·농담·공감을 섞어라.\n"
@@ -380,9 +444,14 @@ class AIDirector:
         self.flush_pending()
         return ok_list
 
-    def assign_roles(self, roles):
+    def assign_roles(self, roles, core=None, claims_fn=None):
         for pl in self.players:
             pl.role = roles.get(pl.name, "citizen")
+            pl.intel = {}                      # 새 판 — 지난 판의 조사 정보를 버린다
+            if core is not None:
+                pl.core_ref = core
+            if claims_fn is not None:
+                pl.claims_fn = claims_fn
 
     def observe_all(self, speaker, text):
         """모든 살아있는 AI의 기억에 한 발언을 적립."""

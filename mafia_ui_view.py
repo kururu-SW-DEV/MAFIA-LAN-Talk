@@ -794,6 +794,26 @@ class MafiaViewMixin:
             self._mafia_append_live(rec)
         if getattr(self, "mafia_host_mode", False) and self.mafia_active:
             self._mafia_broadcast("sys", text=text)
+        self._ai_observe_system(text)
+
+    # AI가 알아야 하는 게임 결과만 골라 기억에 넣는다(진행률·접속·안내·오류 같은 잡음은 제외 — AI는 최근 12개
+    # 발언만 보므로 잡음이 섞이면 정작 중요한 결과가 밀려난다). 비공개 정보(경찰 결과 등)는 시스템 줄이 아니라 개인
+    # 쪽지(host_dm)로만 가므로 여기에 들어오지 않는다.
+    _AI_VISIBLE_SYSTEM_PREFIXES = (
+        "🕯 밤 사망", "🎭 직업 공개", "🎭 정체 공개", "⚖ 찬성", "⚖ 최후 변론", "⚖ 변론 종료", "⚖ 게임 종료",
+        "🗳 유효표 없음", "🗳 최다 득표 동률", "🗳 재투표도 동률", "🗳 동률 후보", "⏰ 낮 시간 종료",
+        "⏰ 찬반 투표 시간 초과", "💀")
+
+    def _ai_observe_system(self, text):
+        """호스트에서만: 게임 결과 시스템 안내(사망·처형·직업 공개·개표 결과)를 모든 AI의 기억에 넣는다.
+        예전에는 사회자 발언과 채팅만 기억해서, 처형 결과(찬반 수·부결)나 공개된 직업을 AI가 몰랐다."""
+        try:
+            if not (getattr(self, "mafia_host_mode", False) and getattr(self, "ai", None)):
+                return
+            if isinstance(text, str) and text.startswith(self._AI_VISIBLE_SYSTEM_PREFIXES):
+                self.ai.observe_all("시스템", text)
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
 
     def add_mafia_host(self, text):
         self.add_mafia_bubble(text, "🖥 사회자")

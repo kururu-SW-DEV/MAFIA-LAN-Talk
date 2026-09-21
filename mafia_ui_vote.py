@@ -338,7 +338,15 @@ class MafiaVoteMixin:
                 if target and ag.name in self.core.players:
                     # (바깥 함수의 target을 여기서 재대입하면 파이썬이 지역변수로 취급해
                     #  UnboundLocalError가 난다 — 새 이름으로 받는다)
-                    final_target = self._pile_on_redirect(ag.name, target)
+                    # 경찰 AI는 조사로 확인한 마피아가 살아 있으면 대부분 그 사람에게 투표한다(몰표 분산도 적용 안 함).
+                    known = ag.known_mafia_alive() if hasattr(ag, "known_mafia_alive") else []
+                    claimants = ag.police_claimants() if hasattr(ag, "police_claimants") else []
+                    if known and random_mod.random() < 0.9:
+                        final_target = random_mod.choice(known)
+                    elif claimants and random_mod.random() < 0.75:
+                        final_target = random_mod.choice(claimants)   # 마피아 AI: 경찰을 자처한 사람에게 표를 모은다
+                    else:
+                        final_target = self._pile_on_redirect(ag.name, target)
                     self.core.cast_vote(ag.name, final_target)
                     _pd, _pt = self._vote_progress_counts()
                     self.add_mafia_system(f"🗳 {ag.name}(AI)님 투표 완료 (익명 개표) · 진행률 {_pd}/{_pt}")
@@ -683,7 +691,8 @@ class MafiaVoteMixin:
             if not cand:
                 self.core.cast_abstain(pl.name)
             else:
-                target = _r.choice(cand)
+                known = [n for n in (pl.known_mafia_alive() if hasattr(pl, "known_mafia_alive") else []) if n in cand]
+                target = _r.choice(known) if known else _r.choice(cand)     # 경찰 AI는 확인한 마피아를 우선 지목
                 self.core.votes[pl.name] = target
                 _pd, _pt = self._vote_progress_counts()
                 self.add_mafia_system(f"🗳 {pl.name}(AI)님 재투표 완료 (익명 개표) · 진행률 {_pd}/{_pt}")

@@ -31,7 +31,9 @@ class MafiaNightMixin:
             # 인간 마피아까지 포함해 동료 살해 제외 + 자투 금지
             cand = [n for n in alive if n != pl.name and n not in all_mafias]
             if cand:
-                t = _rr.choice(cand)
+                claimed = [n for n in self._live_police_claims() if n in cand]
+                # 경찰을 자처한 사람이 있으면 마피아 AI는 대부분 그 사람을 노린다
+                t = _rr.choice(claimed) if (claimed and _rr.random() < 0.9) else _rr.choice(cand)
                 results.setdefault("kill", t)
                 results["multi"].append(t)
                 results["multi_pairs"].append((pl.name, t))
@@ -173,9 +175,15 @@ class MafiaNightMixin:
         prompt = (f"[밤 행동 — 마피아] 오늘 밤 살해할 사람을 한 명 고르세요. 후보(시민 쪽 생존자): "
                   f"{', '.join(cands)}. 마피아 비밀 대화: {talk}. 낮 토론에서 마피아 쪽을 의심하거나 "
                   f"추리가 날카로웠던 사람, 경찰·의사로 짐작되는 사람을 우선 고려하세요. "
-                  f"답은 오직 '선택 이름' 한 줄.")
+                  + (f"경찰이라고 밝힌 사람: {', '.join(n for n in self._live_police_claims() if n in cands)} — 우선 제거하세요. "
+                     if any(n in cands for n in self._live_police_claims()) else "")
+                  + f"답은 오직 '선택 이름' 한 줄.")
 
         def apply(target):
+            import random as _r3
+            claimed = [n for n in self._live_police_claims() if n in cands]
+            if claimed and _r3.random() < 0.85:
+                target = _r3.choice(claimed)        # 경찰을 자처한 사람은 LLM 판단보다 우선 제거 대상
             for pl in ais:
                 if (core.players.get(pl.name) or {}).get("alive"):
                     core.mafia_night_vote(pl.name, target)       # 이후 합의 단계에서 AI 지목으로 쓰인다
@@ -211,9 +219,11 @@ class MafiaNightMixin:
                                   if pl.role == "police" and pl.alive), None)
                 if res and pl_police:
                     verdict = "마피아" if res == "mafia" else "마피아가 아님"
+                    if hasattr(pl_police, "add_intel"):
+                        pl_police.add_intel(inv, res)      # 영구 기록 — 이후 발언·투표에 활용
                     pl_police.memory.append(
                         {"role": "user",
-                         "content": f"[사회자 밤 비밀 통보 — 절대 채팅에 노출 금지] "
+                         "content": f"[사회자 밤 비밀 통보] "
                                     f"조사 결과: {inv} = {verdict}"})
             save_t = results.get("save")
             if save_t and not self.core.night_saved:
@@ -641,9 +651,11 @@ class MafiaNightMixin:
                 self._ghost_dm(f"🕵 [밤 조사 결과 — 나에게만] {victim_t}님은 {verdict}")
             elif pl_police:
                 # AI 경찰 — 기억에 적립(발화 참조용, 노출 금지 지시 포함)
+                if hasattr(pl_police, "add_intel"):
+                    pl_police.add_intel(victim_t, res)
                 pl_police.memory.append(
                     {"role": "user",
-                     "content": f"[사회자 밤 비밀 통보 — 채팅 노출 금지] "
+                     "content": f"[사회자 밤 비밀 통보] "
                                 f"조사 결과: {victim_t} = {verdict}"})
             self.core.police_report = None
         winner = self.core.check_winner()

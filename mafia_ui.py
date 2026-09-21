@@ -426,7 +426,8 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         self._mafia_disconnected = set()   # v1.42 — 새 판 시작, 접속 상태 추적 초기화
         self._mafia_start_disconnect_watch()
 
-        self.ai.assign_roles(assigned)
+        self._police_claims = {}
+        self.ai.assign_roles(assigned, self.core, self._live_police_claims)
         role_names = ROLE_LABEL_KR
         # v1.61 — 명단(roster) 브로드캐스트를 역할 개인 쪽지보다 먼저 보낸다.
         # 순서가 반대였을 때는 원격 참가자의 core.players가 아직 비어있는
@@ -473,7 +474,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         oks = self.ai.spawn_all(personas_to_spawn, self.engine.name,
                                 players_desc, names=ai_names)
         # AI 스폰 완료 후 core의 역할 정보를 AI 객체들에게 배정!
-        self.ai.assign_roles({n: p["role"] for n, p in self.core.players.items()})
+        self.ai.assign_roles({n: p["role"] for n, p in self.core.players.items()}, self.core, self._live_police_claims)
         fail = [n for n, ok in oks if not ok]
         if fail:
             self.root.after(0, lambda: self.add_mafia_system(
