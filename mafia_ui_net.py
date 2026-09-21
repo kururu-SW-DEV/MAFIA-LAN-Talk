@@ -263,9 +263,41 @@ class MafiaNetMixin:
             ident[claimed] = key               # 처음 확인된 접속 주소에 이름을 묶는다
         return ok
 
+    _STALE_GAME_SECONDS = 180      # 방장에게서 이 시간 넘게 아무 패킷도 없고 접속 목록에도 없으면 판이 끝난 것으로 본다
+
+    def _clear_stale_host_state(self):
+        """새 모집 알림을 받기 전에, 지난 판이 비정상적으로 끝나 남은 상태를 걷어낸다.
+        남아 있으면 이 PC가 아직 방장이거나 진행 중인 판이 있다고 믿어 새 방장의 모집 알림을
+        전부 버리고, 그러면 [참가 신청] 버튼이 뜨지 않는다.
+          - 방장 신분인데 모집도 게임도 진행 중이 아님(게임 시작 실패·비정상 종료 등)
+          - 클라이언트인데 진행 중이라 믿는 판의 방장이 오래 조용하고 접속 목록에도 없음(종료 알림을 놓침)"""
+        try:
+            recruiting = bool(getattr(self, "_recruiting", False))
+            active = bool(getattr(self, "mafia_active", False))
+            host = getattr(self, "_recruiter_host", None)
+            me = getattr(self.engine, "name", None)
+            if not recruiting and not active:
+                self.mafia_host_mode = False
+                if host == me:                 # 내가 방장이던 흔적만 지운다(남의 방장 정보는 그대로)
+                    self._recruiter_host = None
+                return
+            last = getattr(self, "_mafia_last_host_ts", None)
+            if (active and not self._mafia_is_host() and host and host != me and last
+                    and time.time() - last > self._STALE_GAME_SECONDS
+                    and self._mafia_peer_raw(host) is None):
+                self.mafia_active = False
+                self._recruiter_host = None
+                self._my_mafia_role = None
+                self._my_mafia_mates = None
+                self.core.lobby_reset()
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
     def _proto_authorized(self, t, ev, sender_name, peer=None):
         """[MAFIA1] 이벤트의 송신자 검증. 같은 LAN의 누구든 가짜 '게임 종료/역할 통보' 같은
         방장 전용 패킷이나 남의 이름으로 된 투표·밤 행동을 보낼 수 있던 문제를 막는다."""
+        if t == "recruit_start":
+            self._clear_stale_host_state()
         me = getattr(self.engine, "name", None)
         host = getattr(self, "_recruiter_host", None)
         am_host = bool(self._mafia_is_host() or (host and host == me))
@@ -334,6 +366,8 @@ class MafiaNetMixin:
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
             return False
+        if t != "recruit_start" and t in self._HOST_ONLY_EVENTS:
+            self._mafia_last_host_ts = time.time()      # 방장이 살아 있다는 표시
         # 참가 신청하지 않은 사람에게는 게임 진행 화면(시작·밤 연출·투표 팝업)을 띄우지 않는다.
         if not self._mafia_is_host():
             if t == "start":
