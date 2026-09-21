@@ -473,6 +473,8 @@ class MafiaNetMixin:
         except Exception:
             return False
         t = ev.get("t")
+        if t in ("defense_start", "verdict", "night", "day", "end", "tally") and not self._mafia_is_host():
+            self._vote_window = False
         if t in ("verdict", "night", "day", "end") and not self._mafia_is_host():
             self._clear_client_defense()
         if not self._proto_authorized(t, ev, sender_name, peer):
@@ -566,6 +568,8 @@ class MafiaNetMixin:
                     self._close_night_panel_on_ack(msg_txt)
                     if isinstance(msg_txt, str) and msg_txt.startswith("⚠"):
                         self._night_panel_warn(msg_txt)      # 원격 참가자도 거절 사유를 팝업 안에서 본다
+                    elif isinstance(msg_txt, str) and msg_txt.startswith("💉") and getattr(self, "_pending_heal", None):
+                        self._confirmed_heal = self._pending_heal      # 호스트가 치료를 접수했다 — 밤이 끝나면 last_protect가 된다
                 role = ev.get("role")
                 if not role:
                     for r_key, r_kr in [("mafia", "마피아"), ("doctor", "의사"), ("police", "경찰"), ("citizen", "시민")]:
@@ -584,6 +588,8 @@ class MafiaNetMixin:
         elif t == "start":
             self.mafia_active = True
             self._reset_ghost_state()
+            self._pending_heal = None
+            self._confirmed_heal = None
             self._recruiting = False
             self._recruited_humans = []
             self._my_joined = False
@@ -654,6 +660,10 @@ class MafiaNetMixin:
             self._mafia_room_close()
             victim = ev.get("victim")
             role = ev.get("role")
+            # 원격 의사: 호스트만 갖던 "어젯밤 치료 대상"을 내 화면에도 기록해 다음 밤 팝업에서 미리 비활성화한다
+            self.core.last_protect = getattr(self, "_confirmed_heal", None)
+            self._confirmed_heal = None
+            self._pending_heal = None
             if victim and victim in self.core.players:
                 self.core.players[victim]["alive"] = False
                 if role:

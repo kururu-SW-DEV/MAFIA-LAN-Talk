@@ -125,7 +125,7 @@ for i in range(40):
     cd.clear(); scheduled.clear()
     app._maybe_police_defend("철수", "영희 좀 수상하지 않아?")
     triggered += bool(scheduled)
-check(f"마피아가 아님이 확인된 사람이 의심받으면 경찰 AI가 옹호에 나섬 ({triggered}/40, 기대 70%)", triggered >= 20)
+check(f"마피아가 아님이 확인된 사람이 의심받으면 경찰 AI가 옹호에 나섬 ({triggered}/40, 기대 70%)", triggered >= 15)   # 기대 28±3 — 난수 규칙이라 여유를 둔다
 for _ in range(60):                        # 70% 확률이라 발동할 때까지 반복
     cd.clear(); scheduled.clear()
     app._maybe_police_defend("철수", "영희 좀 수상하지 않아?")

@@ -427,6 +427,8 @@ class MafiaNightMixin:
             # 바로 다른 대상을 다시 고를 수 있어야 하기 때문. 접수 결과 쪽지(hdm)가 오면
             # _close_night_panel_on_ack가 닫고, 안 오면 카운트다운이 닫는다.
             self._ghost_dm("⏳ 밤 행동을 호스트에게 전달했습니다 — 처리 결과는 곧 알려드립니다.")
+            if role == "doctor":
+                self._pending_heal = name          # 호스트가 접수(💉)해 주면 확정한다
             self._mafia_send_to_host("night_action", actor=me, role=role, target=name)
 
     def _close_night_panel_on_ack(self, text):

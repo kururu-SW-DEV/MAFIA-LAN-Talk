@@ -741,16 +741,18 @@ class MafiaSecretMixin:
             while True:
                 who, ai_name, text = self._ghost_relay_q.get_nowait()
                 self._ghost_relay_pending -= 1
-                lines = getattr(self, "_ghost_remote_log", {}).get(who)
-                if lines is not None:
-                    lines.append(f"👻 {ai_name}: {text}")
-                    del lines[:-30]
-                self._mafia_send_private(who, "ghost_say", name=ai_name, text=text)
+                try:                       # 한 건이 실패해도 큐에 남은 다른 사망자의 답장은 계속 처리한다
+                    lines = getattr(self, "_ghost_remote_log", {}).get(who)
+                    if lines is not None:
+                        lines.append(f"👻 {ai_name}: {text}")
+                        del lines[:-30]
+                    self._mafia_send_private(who, "ghost_say", name=ai_name, text=text)
+                except Exception as _swallow_e:
+                    applog.swallowed(_swallow_e)
         except _q.Empty:
             pass
         except Exception as e:
-            import applog
-            applog.log("ghost_relay_poll", exc=e)
+            applog.log("ghost_relay_poll", exc=e)      # (지역 import applog를 두면 위쪽의 applog 사용이 UnboundLocalError가 된다)
         if self._ghost_relay_pending > 0:
             self.root.after(300, self._poll_ghost_relay)
         else:

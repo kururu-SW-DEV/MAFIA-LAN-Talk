@@ -50,7 +50,7 @@ class MafiaVoteMixin:
         m, s = divmod(remain, 60)
         try:
             self.mafia_phase_lbl.config(
-                text=f"☀ 낮 {self.core.day_no} · 토론 중 — 남은 {m}:{s:02d} (자유롭게 토론하세요)")
+                text=f"☀ 낮 {self.core.day_no} · 토론 중 — 남은 {m}:{s:02d} (자유롭게 토론하세요)" + self._role_tag())
             if getattr(self, "current", None) and self.current[0] == "mgame":
                 self.ch_sub.config(text=f"토론 중 — 개표까지 {m}:{s:02d}", fg="#c4b5fd")
         except Exception as _swallow_e:
@@ -591,6 +591,7 @@ class MafiaVoteMixin:
             return
         self._tally_in_progress = True
         self._cancel_tally_safety_timers()
+        self._vote_window = False        # 개표가 시작되면 "투표 창 열림" 표시를 끈다(DAY로 남은 채 "개표 중"이 되살아나는 것 방지)
         self.core.phase = Phase.VOTE
         self.refresh_mafia_phase_label()
         return self._tally_full()
@@ -617,6 +618,7 @@ class MafiaVoteMixin:
 
     def _open_revote_popup(self, tied):
         """동률 후보만 선택지로 제한한 재투표 팝업(기권 포함)."""
+        self._vote_window = True          # 재투표 중에도 상단 안내를 "개표 중"으로(클라이언트의 낮 카운트다운 틱은 이미 멈춰 있다)
         # --- v1.06/v1.34: 재투표는 1차 표를 지우고 다시 수집(AI 투입 포함) ---
         self.core.votes.clear()
         self.core.abstains.clear()
@@ -764,6 +766,7 @@ class MafiaVoteMixin:
         if getattr(self, "_defense_in_progress", False):
             return
         self._defense_in_progress = True
+        self._vote_window = False
         self.core.set_defendant(name)
         self.add_mafia_host(f"⚖ '{name}' 님이 최다 득표로 최후 변론대에 섰습니다. (60초)")
         self.add_mafia_system(f"⚖ 최후 변론(60초): 피고인만 변론합니다. 이후 찬반 투표({DEFENSE_VOTE_WINDOW}초).")

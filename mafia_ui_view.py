@@ -33,16 +33,24 @@ class MafiaViewMixin:
 
     def _ai_distinct_color(self, label):
         """게임 중 AI 참가자에게 서로 다른 색을 준다. 이름 정렬 순서로 배정하므로 모든 참가자 화면에서
-        같은 색이 되고(명단은 전원이 같다), 게임 밖이거나 AI가 아니면 None."""
+        같은 색이 되고(명단은 전원이 같다), 게임 밖이거나 AI가 아니면 None.
+        말풍선·아바타를 그릴 때마다 호출되므로 명단이 바뀌지 않는 동안은 결과를 캐시해 정렬·락을 피한다."""
         core = getattr(self, "core", None)
         if not core or not getattr(self, "mafia_active", False):
             return None
         try:
+            cache = getattr(self, "_ai_color_cache", None)
+            n_players = len(core.players)
+            if cache is not None and cache[0] == n_players and label in cache[1]:
+                return cache[1][label]
             with core.lock:
-                if not (core.players.get(label) or {}).get("is_ai"):
+                info = core.players.get(label) or {}
+                if not info.get("is_ai"):
                     return None
                 ais = sorted(n for n, p in core.players.items() if p.get("is_ai"))
-            return self.AI_DISTINCT_COLORS[ais.index(label) % len(self.AI_DISTINCT_COLORS)]
+            palette = self.AI_DISTINCT_COLORS
+            self._ai_color_cache = (n_players, {n: palette[i % len(palette)] for i, n in enumerate(ais)})
+            return self._ai_color_cache[1].get(label)
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
             return None
@@ -682,7 +690,7 @@ class MafiaViewMixin:
     def _set_night_count(self, sec):
         try:
             self.mafia_phase_lbl.config(
-                text=f"🌙 밤 {self.core.day_no} · 마피아/의사 행동 대기 — {sec}초")
+                text=f"🌙 밤 {self.core.day_no} · 마피아/의사 행동 대기 — {sec}초" + self._role_tag())
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
 
@@ -763,6 +771,15 @@ class MafiaViewMixin:
         self._refresh_mafia_roster()
         self._roster_tick_id = self.root.after(2000, self._mafia_roster_tick)
 
+    def _role_tag(self):
+        """상단 안내 끝에 붙는 " | 내 직업: …". 낮 카운트다운·밤 카운트다운처럼 안내를 직접 덮어쓰는 곳에서도 붙여
+        직업 표시가 1초 만에 사라지지 않게 한다."""
+        my_role = getattr(self, "_my_mafia_role", None)
+        if getattr(self, "mafia_active", False) and my_role:
+            r_info = {"mafia": "🔪 마피아", "doctor": "💉 의사", "police": "🕵 경찰", "citizen": "🧑‍🌾 시민"}.get(my_role, my_role)
+            return f" | 내 직업: {r_info}"
+        return ""
+
     def refresh_mafia_phase_label(self):
         if getattr(self, "mafia_active", False) and getattr(self, "_roster_tick_id", None) is None:
             self._roster_tick_id = self.root.after(0, self._mafia_roster_tick)
@@ -784,11 +801,7 @@ class MafiaViewMixin:
         else:
             txt = "⚖ 게임 종료 — 재시작 가능"
 
-        # 내 직업 정보가 있으면 상태 라벨 끝에 붙여 상시 인지 가능하게 함
-        my_role = getattr(self, "_my_mafia_role", None)
-        if self.mafia_active and my_role:
-            r_info = {"mafia": "🔪 마피아", "doctor": "💉 의사", "police": "🕵 경찰", "citizen": "🧑‍🌾 시민"}.get(my_role, my_role)
-            txt += f" | 내 직업: {r_info}"
+        txt += self._role_tag()       # 내 직업 정보가 있으면 상태 라벨 끝에 붙여 상시 인지 가능하게 함
 
         try:
             self.mafia_phase_lbl.config(text=txt)

@@ -2645,8 +2645,23 @@ class Engine:
                     pass
         return sorted(results, key=lambda x: x["ts"], reverse=True)[:limit]
 
+    def _cancel_pending_timers(self):
+        """읽음 확인·자동 삭제 시작 배치용 Timer를 정리한다(종료 뒤에도 대기하다 전송을 시도하지 않게)."""
+        try:
+            with self._read_ack_lock:
+                for table in (self._read_ack_timer, self._gread_ack_timer, self._burn_start_timer):
+                    for t in list(table.values()):
+                        try:
+                            t.cancel()
+                        except Exception as _swallow_e:
+                            applog.swallowed(_swallow_e)
+                    table.clear()
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
     def stop(self):
         self._stop.set()
+        self._cancel_pending_timers()
         if self.sock:
             try:
                 self.sock.close()
