@@ -76,7 +76,7 @@ class MafiaAIChatMixin:
                         self.add_mafia_host_dm(f"💉 (의사 신청 접수) {target_lbl} 구조 지시")
                     else:
                         self.add_mafia_host_dm(
-                            f"⚠ {t}은(는) 어제 밤에 이미 보호했습니다 — 연속 보호 금지. "
+                            f"⚠ {t}님은 어젯밤 이미 치료한 사람입니다 — 중복 치료는 안 됩니다. "
                             f"다른 대상을 입력하세요 (예: '구조 이름').")
                 else:
                     self.add_mafia_host_dm(f"'{t}'은(는) 구조 대상이 될 수 없습니다 (생존자 아님).")

@@ -309,6 +309,7 @@ class MafiaNightMixin:
             if already:
                 tk.Label(body, text=f"이미 조사: {', '.join(already) or '없음'}",
                          fg="#6b7280", bg="#1f2937", font=FONT_SM).pack(pady=(0, 8))
+            self._make_night_warn(body)
             self._start_night_pick_countdown(body)
             return
         if role not in ("mafia", "doctor") or not info.get("alive", True):
@@ -318,9 +319,16 @@ class MafiaNightMixin:
         row = tk.Frame(body, bg="#1f2937"); row.pack(fill="x", padx=18, pady=10)
         mafia_names = set(self.core.mafias()) if role == "mafia" else set()
         cands = [n for n in self.core.alive_players() if not (role == "mafia" and n in mafia_names)]
+        last_healed = getattr(self.core, "last_protect", None) if role == "doctor" else None
 
         def _mk_night_btn(parent, n):
             lbl = f"{n} (나)" if n == me else n
+            if last_healed and n == last_healed:
+                # 어젯밤 치료한 사람은 연속으로 치료할 수 없다 — 누르기 전에 미리 표시(중복 선택 방지)
+                return emoji_render.make_pill_button(
+                    parent, lbl + " · 어제 치료", lambda: None, bg="#1f2937", fg="#6b7280", hover_bg=None,
+                    font_path=emoji_render.FONT_PATH_REGULAR, font_size=POPUP_BTN_PX,
+                    radius=8, pad_x=10, pad_y=4, min_w=90, state="disabled")
             return emoji_render.make_pill_button(
                 parent, lbl, lambda nn=n, r=role: self._apply_night_pick(nn, r),
                 bg="#374151", fg="white", hover_bg="#4b5563",
@@ -328,7 +336,33 @@ class MafiaNightMixin:
                 radius=8, pad_x=10, pad_y=4, min_w=90
             )
         self._grid_candidates_centered(row, cands, _mk_night_btn, padx=4, pady=4)
+        if last_healed and last_healed in cands:
+            tk.Label(body, text=f"어젯밤 치료한 '{last_healed}'님은 연속으로 치료할 수 없습니다.", fg="#9ca3af",
+                     bg="#1f2937", font=FONT_SM, wraplength=320).pack(pady=(0, 4))
+        self._make_night_warn(body)
         self._start_night_pick_countdown(body)
+
+    def _make_night_warn(self, body):
+        """밤 행동 팝업 안의 경고 줄. 호스트가 선택을 거절하면(의사 중복 치료 등) 채팅이 아니라 이 팝업 안에 표시한다 —
+        예전에는 경고가 채팅 쪽지로만 가서 팝업이 가리고 있는 채팅 화면 뒤에 숨어 아무것도 안 보였다."""
+        self._night_warn_lbl = tk.Label(body, text="", fg="#fca5a5", bg="#1f2937", font=FONT_SM, wraplength=320,
+                                        justify="center")
+        self._night_warn_lbl.pack(pady=(0, 6))
+
+    def _night_panel_warn(self, text):
+        """열려 있는 밤 행동 팝업에 경고를 띄운다(없으면 아무 일도 하지 않는다)."""
+        lbl = getattr(self, "_night_warn_lbl", None)
+        if lbl is None or not isinstance(text, str):
+            return
+        try:
+            if not lbl.winfo_exists():
+                self._night_warn_lbl = None
+                return
+            import re as _re
+            lbl.config(text=_re.sub(r"^⚠\s*\([^)]*\)\s*", "⚠ ", text))
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+            self._night_warn_lbl = None
 
     def _start_night_pick_countdown(self, body):
         """마피아/의사/경찰 밤 행동 선택 패널 공통 카운트다운 — 15초 안에 안
@@ -376,7 +410,11 @@ class MafiaNightMixin:
     def _apply_night_pick(self, name, role):
         me = getattr(self.engine, "name", None)
         if self._mafia_is_host():
-            ok = self._night_action_apply(me, role, name, self._ghost_dm)
+            def _notify(text):
+                self._ghost_dm(text)
+                if isinstance(text, str) and text.startswith("⚠"):
+                    self._night_panel_warn(text)            # 팝업 안에도 경고를 띄운다
+            ok = self._night_action_apply(me, role, name, _notify)
             if ok:
                 self._mafia_overlay_close()
             # v1.29 — 실패(의사 연속보호 등)면 패널을 닫지 않고 유지: 유저가
@@ -440,7 +478,7 @@ class MafiaNightMixin:
             desc = f"{target} (자신)" if target == actor else target
             notify(f"💉 ({actor} 의사 신청) {desc} 구조 지시 접수")
             return True
-        notify(f"⚠ ({actor} 의사) {target}은(는) 어제 밤에 이미 보호했습니다 — 연속 보호 금지! 다른 대상 선택")
+        notify(f"⚠ ({actor} 의사) {target}님은 어젯밤 이미 치료한 사람입니다 — 중복 치료는 안 됩니다. 다른 대상을 선택하세요")
         return False
 
     def _night_resolve_bg(self):

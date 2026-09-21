@@ -143,6 +143,7 @@ class MafiaNetMixin:
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
             self._day_tick = None
+        self._vote_window = False
         self._day_deadline = time.time() + DAY_CYCLE_SECONDS
         self._day_tick_loop()
 
@@ -563,6 +564,8 @@ class MafiaNetMixin:
                     self._my_tok = ev.get("tok")
                 if not self._mafia_is_host():
                     self._close_night_panel_on_ack(msg_txt)
+                    if isinstance(msg_txt, str) and msg_txt.startswith("⚠"):
+                        self._night_panel_warn(msg_txt)      # 원격 참가자도 거절 사유를 팝업 안에서 본다
                 role = ev.get("role")
                 if not role:
                     for r_key, r_kr in [("mafia", "마피아"), ("doctor", "의사"), ("police", "경찰"), ("citizen", "시민")]:

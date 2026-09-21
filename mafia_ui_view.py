@@ -773,6 +773,8 @@ class MafiaViewMixin:
         ph = self.core.phase
         if ph == Phase.LOBBY:
             txt = "로비 — [게임 시작]을 누르면 AI 참가자가 배정됩니다"
+        elif ph == Phase.DAY and getattr(self, "_vote_window", False):
+            txt = "🗳 개표 중 — 투표를 진행하세요"      # 투표 창이 열린 동안(core는 표를 받기 위해 DAY를 유지한다)
         elif ph == Phase.DAY:
             txt = f"☀ 낮 {self.core.day_no} · 토론 중 — 자유롭게 토론하세요"
         elif ph == Phase.NIGHT:

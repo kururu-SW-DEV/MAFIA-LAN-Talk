@@ -30,6 +30,7 @@ class MafiaVoteMixin:
         self.ai.say_async(factory, honor_freq=False)
 
     def start_day_timer(self):
+        self._vote_window = False
         self._cancel_mafia_timer()
         self._last_any_talk_ts = time.time()   # v1.12 — 침묵 감지 기준점
         self._day_deadline = time.time() + DAY_CYCLE_SECONDS
@@ -136,6 +137,17 @@ class MafiaVoteMixin:
     def _show_vote_popup(self):
         if not self.mafia_active:
             return
+        # 투표 창이 열리면 상단 안내를 "토론 중"에서 "개표 중"으로 넘긴다. 예전에는 원격 참가자의 낮 카운트다운 틱이 계속 돌아
+        # (호스트는 open_the_vote가 취소했지만 클라이언트는 취소하지 않았다) 투표 중에도 "토론 중 — 남은 …"이 남아 있었다.
+        self._vote_window = True
+        t = getattr(self, "_day_tick", None)
+        if t:
+            try:
+                self.root.after_cancel(t)
+            except Exception as _swallow_e:
+                applog.swallowed(_swallow_e)
+            self._day_tick = None
+        self.refresh_mafia_phase_label()
         self._vote_popup_open_ts = time.time()   # v1.40 — 유저 우선 유예시간 기준점
         # v1.13/v1.34 — 사망자는 투표 팝업 자체가 열리지 않게(유령방 안내로 대체), AI 투표는 정상 진행
         me_check = getattr(self.engine, "name", None)
