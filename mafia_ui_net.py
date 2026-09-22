@@ -134,6 +134,22 @@ class MafiaNetMixin:
             self._mafia_overlay_close()
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
+        self._client_reset_to_lobby()
+
+    def _client_force_quit_end(self):
+        """v1.89 — 방장이 게임을 강제 종료했을 때(force_end) 원격 참가자 쪽 처리.
+        _client_game_end과 달리 승패·정체 공개가 없다(승부가 나서 끝난 게 아니므로)."""
+        self._mafia_room_close()
+        self._reset_ghost_state()
+        self.add_mafia_system("🛑 방장이 게임을 강제로 종료했습니다.")
+        try:
+            self._mafia_overlay_close()
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+        self._client_reset_to_lobby()
+
+    def _client_reset_to_lobby(self):
+        """게임이 끝난 뒤(정상 종료·강제 종료 공통) 원격 참가자 쪽 상태를 로비로 되돌린다."""
         self.mafia_active = False
         self._recruiting = False
         self._recruited_humans = []
@@ -146,6 +162,8 @@ class MafiaNetMixin:
         self._set_night_theme(False)
         if hasattr(self, "mafia_role_btn"):
             self.mafia_role_btn.pack_forget()
+        if hasattr(self, "mafia_force_quit_btn"):
+            self.mafia_force_quit_btn.pack_forget()
         if hasattr(self, "mafia_start_btn"):
             self.mafia_start_btn.configure(text="📢 참가자 모집", bg="#b91c1c",
                                            activebackground="#7f1d1d", state="normal")
@@ -239,7 +257,8 @@ class MafiaNetMixin:
     _HOST_ONLY_EVENTS = frozenset({
         "hsay", "asay", "sys", "hdm", "start", "night", "day", "death", "end", "tally",
         "vote", "vote_open", "revote_open", "defense_vote_open", "defense_start", "verdict",
-        "recruit_start", "recruit_update", "recruit_cancel", "ghost_say"})
+        "recruit_start", "recruit_update", "recruit_cancel", "ghost_say",
+        "force_end"})   # v1.89 — 방장의 게임 강제 종료
 
     # 참가자가 자기 이름으로 보내는 이벤트 → 본문에 적힌 '누구'가 실제 송신자와 같아야 한다.
     _PEER_CLAIM_FIELD = {
@@ -525,8 +544,15 @@ class MafiaNetMixin:
                 self._in_game = True
             elif (t in ("night", "day", "death", "tally", "vote", "vote_open", "revote_open",
                         "defense_vote_open", "defense_start", "verdict", "end",
-                        # 사회자·AI·참가자의 게임 중 대화도 참가하지 않은 사람에게는 보이면 안 된다
-                        "hsay", "asay", "sys", "user_say", "ghost_say", "mafia_say", "lobby_chat")
+                        # 사회자·AI·참가자의 게임 중 대화도 참가하지 않은 사람에게는 보이면 안 된다.
+                        # v1.89 — "lobby_chat"은 여기 넣으면 안 됐다: 참가 못 한 사람들끼리
+                        # 나누는 대화가 바로 lobby_chat인데, 이 목록에 있으면 '참가 안 함'
+                        # 판정(_in_game=False) 그 자체가 수신을 막아버려서, 게임이 시작된
+                        # 뒤로는 구경꾼끼리도 서로에게 로비 채팅이 전혀 가지 않았다(실사용
+                        # 지적 — "로비 채팅이 상대에게 안 간다"의 실제 원인). 참가자 화면에
+                        # 안 보이게 하는 필터는 이미 아래 lobby_chat 처리부에 있는
+                        # mafia_active 확인이 대신 맡는다.
+                        "hsay", "asay", "sys", "user_say", "ghost_say", "mafia_say")
                   and not getattr(self, "_in_game", True)):
                 return True
         if t == "hsay":
@@ -745,6 +771,9 @@ class MafiaNetMixin:
         elif t == "end":
             if not self._mafia_is_host():
                 self._client_game_end(ev.get("winner"), ev.get("roles") or {})
+        elif t == "force_end":
+            if not self._mafia_is_host():
+                self._client_force_quit_end()
         elif t == "defense_start":
             self.core.defendant = ev.get("name")
             self._defense_in_progress = True
@@ -888,7 +917,22 @@ class MafiaNetMixin:
             msg_text = ev.get("text", "")
             me = getattr(self.engine, "name", None)
             if getattr(self, "mafia_active", False):
-                return True        # 게임 중 로비 채팅은 참가하지 않은 사람의 발언 — 게임방에 넣지 않는다
+                # 게임 중 로비 채팅은 참가하지 않은 사람들끼리만 나누는 대화다 — 방장·참가자
+                # 화면에는 일부러 안 보인다(구경꾼 채팅이 게임 진행을 방해하지 않게). 다만 이게
+                # "로비 채팅이 상대에게 안 간다"는 문의의 원인일 수 있어(자신의 mafia_active가
+                # 이전 판이 제대로 정리되지 않아 계속 True인 줄 모르고 새 대화를 시도하는 경우)
+                # 조용히 버리지 않고 흔적을 남긴다.
+                # v1.89 — 이 함수 위쪽의 '방장 확인 실패' 분기가 'import applog'를 함수
+                # 지역 변수로 만들어(v1.85에서 같은 패턴을 이미 한 번 고쳤던 것과 동일한
+                # 함정), 그 분기를 안 타는 이번 같은 경로에서 모듈 전역 applog를 그냥 쓰면
+                # UnboundLocalError가 난다 — 여기서도 지역으로 다시 import한다.
+                try:
+                    import applog
+                    applog.log("mafia_lobby_chat_dropped", detail=f"from={sender} (mafia_active=True)")
+                except Exception as _swallow_e:
+                    import applog
+                    applog.swallowed(_swallow_e)
+                return True
             if sender != me and msg_text:
                 self.add_mafia_bubble(msg_text, sender)
         return True

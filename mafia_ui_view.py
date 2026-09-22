@@ -400,7 +400,7 @@ class MafiaViewMixin:
         둥근 버튼들의 '투명해 보이는' 네 귀퉁이도 새 배경색에 맞춰 다시
         그린다 — 안 하면 예전 배경색이 모서리에 네모나게 남아 보인다."""
         for name in ("mafia_cfg_btn", "mafia_role_btn", "mafia_cancel_recruit_btn",
-                     "mafia_join_btn", "mafia_start_btn"):
+                     "mafia_join_btn", "mafia_start_btn", "mafia_force_quit_btn"):
             w = getattr(self, name, None)
             redraw = getattr(w, "_pill_redraw", None)
             if callable(redraw):
@@ -589,6 +589,14 @@ class MafiaViewMixin:
             if hasattr(self, "mafia_cancel_recruit_btn"):
                 self.mafia_cancel_recruit_btn.pack_forget()
             self._mafia_pack_lobby_buttons()      # 로비: [참가 신청]을 [참가자 모집] 왼쪽에 항상 표시
+        # v1.89 — 게임이 진행 중이고 내가 방장이면 강제 종료 버튼을 보여준다(실수로 시작한
+        # 게임을 되돌릴 방법이 없었다). 방장이 아닌 참가자·구경꾼에게는 안 보인다 — 종료 권한은
+        # 방장에게만 있다.
+        if hasattr(self, "mafia_force_quit_btn"):
+            if self.mafia_active and self._mafia_is_host():
+                self.mafia_force_quit_btn.pack(side="right", padx=(6, 6), pady=8)
+            else:
+                self.mafia_force_quit_btn.pack_forget()
         self.mafia_bar.pack(fill="x", before=self.chat_wrap)
         self._refresh_mafia_roster()
         self.entry.configure(state="normal", font=FONT_MSG)

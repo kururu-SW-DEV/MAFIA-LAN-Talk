@@ -529,6 +529,33 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         self.ai.say_async(lambda pl: (
             "[게임 종료] 사회자가 승자를 발표했습니다. 당신 역할과 승패는 사회자가 별도 안내했습니다. "
             "진 심정이 담긴 마무리 한마디를 하세요 (역할명은 말해도 됨)."))
+        self._mafia_reset_to_lobby()
+
+    def mafia_force_quit_clicked(self):
+        """v1.89 — 방장이 실수로 [게임 시작]을 눌렀거나 더는 진행하고 싶지 않을 때 즉시
+        끝낼 방법이 없었다(끝까지 진행하거나 앱을 재시작하는 것뿐). 되돌릴 수 없는 동작이라
+        반드시 확인 팝업을 거친다."""
+        if not self.mafia_active or not self._mafia_is_host():
+            return
+        ok = self._embed_confirm(
+            "게임 강제 종료",
+            "지금 진행 중인 마피아 게임을 강제로 끝낼까요?\n"
+            "모든 참가자의 화면이 로비로 돌아가며, 이번 판의 승패는 기록되지 않습니다.\n"
+            "이 동작은 되돌릴 수 없습니다.",
+            kind="warning", ok_label="강제 종료", cancel_label="취소")
+        if not ok:
+            return
+        self.add_mafia_system("🛑 방장이 게임을 강제로 종료했습니다.")
+        self._mafia_broadcast("force_end")
+        self._cancel_mafia_timer()
+        self._mafia_stop_disconnect_watch()
+        self._mafia_room_close()
+        self._reset_ghost_state()
+        self._mafia_reset_to_lobby()
+
+    def _mafia_reset_to_lobby(self):
+        """게임을 끝내고 로비 상태로 되돌리는 공통 마무리 — 정상 종료(_on_game_end)와
+        강제 종료(mafia_force_quit_clicked)가 함께 쓴다."""
         self.mafia_active = False
         # 판이 끝나면 방장 신분도 내려놓는다. 그대로 두면 이 PC가 다음 판에서 클라이언트가 됐을 때
         # 방장 전용 이벤트(recruit_start 등)를 '방장에게 온 것'으로 보고 전부 버려 참가 신청 버튼이 안 뜬다.
@@ -542,6 +569,8 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         self._set_night_theme(False)
         if hasattr(self, "mafia_role_btn"):
             self.mafia_role_btn.pack_forget()
+        if hasattr(self, "mafia_force_quit_btn"):
+            self.mafia_force_quit_btn.pack_forget()
         self.mafia_start_btn.configure(text="📢 참가자 모집", bg="#b91c1c", activebackground="#7f1d1d", state="normal")
         if hasattr(self, "mafia_cancel_recruit_btn"):
             self.mafia_cancel_recruit_btn.pack_forget()
