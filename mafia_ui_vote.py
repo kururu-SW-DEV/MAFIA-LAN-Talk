@@ -200,7 +200,11 @@ class MafiaVoteMixin:
         self._vote_abstain_btn = ab
         self._vote_lbl = lbl
         self._refresh_vote_progress_label()
-        self._tick_vote = self.root.after(1000, self._vote_popup_tick)
+        # v1.90 — 여기서 한 번 예약해두고 바로 밑에서 _vote_popup_tick()을 또 직접 부르면,
+        # 그 안에서 스스로 다음 틱을 다시 예약하며 이 handle을 덮어써 위 예약이 취소되지
+        # 않은 채 고아로 남는다 — 그러면 독립된 두 개의 1초 체인이 동시에 돌아 남은
+        # 시간이 광고된 15초가 아니라 절반 속도로 줄어들었다. _vote_popup_tick() 자기
+        # 자신이 다음 틱까지 예약하므로 여기서는 처음 한 번만 직접 호출한다.
         self._vote_popup_tick()
         # AI 전원 실측 투표 — LLM으로 '투표 이름' 물어 core에 반영, 팝업에 태그 표시
         ai_players = [pl for pl in getattr(self, "ai", None) and self.ai.players or []
@@ -407,7 +411,17 @@ class MafiaVoteMixin:
                     others = [n for n in self.core.alive_players() if n not in (ag.name, final_target)]
                     if others:
                         final_target = random_mod.choice(others)
-            self.core.cast_vote(ag.name, final_target)
+            # v1.90 — 위 재지정(known/claimants/dclaims/의사 회피)이 자기 자신이나 그 사이
+            # 밤 행동·접속 끊김으로 이미 죽은 사람을 골라버릴 수 있다(각 목록이 팝업이 뜬
+            # 시점의 스냅샷이라 실시간 생사와 어긋날 수 있음) — core.cast_vote는 그런
+            # 대상을 조용히 거부하는데, 반환값을 안 보고 그냥 "투표 완료"를 방송해 버려서
+            # 실제로는 표가 하나도 반영되지 않은 채 진행률만 올라가고 all_voted()가 영영
+            # 참이 되지 않았다. 실패하면 살아있는 다른 사람으로 한 번 더 시도한다.
+            if not self.core.cast_vote(ag.name, final_target):
+                fallback_pool = [n for n in self.core.alive_players() if n != ag.name]
+                final_target = random_mod.choice(fallback_pool) if fallback_pool else None
+                if final_target is None or not self.core.cast_vote(ag.name, final_target):
+                    self.core.cast_abstain(ag.name)
             _pd, _pt = self._vote_progress_counts()
             self.add_mafia_system(f"🗳 {ag.name}(AI)님 투표 완료 (익명 개표) · 진행률 {_pd}/{_pt}")
             self._broadcast_vote_done(ag.name, final_target)   # 원격 참가자 화면에도 진행 표시
@@ -1087,11 +1101,15 @@ class MafiaVoteMixin:
         )
         _btn_no.pack(side="left", padx=6)
         self._defense_btns = [_btn_yes, _btn_no]
-        # 15초 안내 카운트다운 — 실제 '안 누르면 기권=반대(부결 쪽) 취급'은
-        # 이미 있던 _force_resolve_defense(60+15초 절대 시각)가 그대로 담당하고,
-        # 여기서는 화면에 남은 시간을 보여주고 시간이 다 되면 이 팝업만 닫는다
-        # (기존에도 안 눌러도 언젠가 처리는 됐지만, 팝업이 화면에 계속 남아있는
-        # 문제가 있었음 — 실측 지적으로 만든 게 아니라 겸사겸사 같이 정리).
+        # 15초 안내 카운트다운 — 실제 미투표 처리는 이미 있던 _force_resolve_defense
+        # (60+15초 절대 시각)가 그대로 담당하고, 여기서는 화면에 남은 시간을 보여주고
+        # 시간이 다 되면 이 팝업만 닫는다(기존에도 안 눌러도 언젠가 처리는 됐지만, 팝업이
+        # 화면에 계속 남아있는 문제가 있었음 — 실측 지적으로 만든 게 아니라 겸사겸사
+        # 같이 정리).
+        # v1.90 — 안내 문구가 "반대로 집계"라고 예전 규칙(v1.88 이전)을 그대로 말하고
+        # 있었다. v1.88부터 미투표(기권)는 찬반 어느 쪽으로도 세지 않도록 바뀌었는데
+        # (한 표가 패킷 유실과 실제 반대를 구분 못 하던 문제 수정), 이 화면 문구를 안
+        # 고쳐서 사용자가 "기권하면 반대가 된다"고 잘못 알고 판단을 내릴 수 있었다.
         state = {"n": DEFENSE_VOTE_WINDOW}
         def _tick_defense_vote():
             self._defense_vote_tick = None
@@ -1099,7 +1117,7 @@ class MafiaVoteMixin:
                 return
             state["n"] -= 1
             if state["n"] <= 0:
-                self.add_mafia_system("⏰ 찬반 투표 시간 초과 — 기권 처리(반대로 집계)")
+                self.add_mafia_system("⏰ 찬반 투표 시간 초과 — 기권 처리(찬반 어느 쪽으로도 집계되지 않습니다)")
                 try:
                     self._mafia_overlay_close()
                 except Exception as _swallow_e:

@@ -226,9 +226,20 @@ try:
     # 시나리오 C — 재접속 감지(가짜 presence 갱신으로 시뮬레이션)
     # =========================================================
     def _revive_b():
-        if b_key and b_key in app.engine.peers:
-            with app.engine.plock:
-                app.engine.peers[b_key]["last"] = time.time()
+        # v1.90 — 이 시점이면 B가 끊긴 지 이미 PEER_TIMEOUT(12초)을 넘긴 뒤라, A의
+        # 백그라운드 정리(_prune, 3초 주기)가 그 사이 peers에서 항목 자체를 지워버렸을
+        # 수 있다(실측 — b_key가 더는 app.engine.peers에 없는 채로 이 함수가 불림).
+        # 그러면 아래 "if b_key in peers" 가드가 있는 예전 방식은 아무 일도 안 해서
+        # 재접속 시뮬레이션 자체가 무산된다 — 지워졌으면 새로 만들어 넣는다.
+        if not b_key:
+            return
+        with app.engine.plock:
+            entry = app.engine.peers.get(b_key)
+            if entry:
+                entry["last"] = time.time()
+            else:
+                app.engine.peers[b_key] = {"name": "이팀장B", "ip": b_key[0], "port": b_key[1],
+                                           "last": time.time(), "static": False}
     do(_revive_b)
     # v1.61 — 끊긴 사람은 사망 처리되므로, 그 사람이 마피아였다면 그 즉시 승패가
     # 갈려 게임이 끝나고(감시 루프도 종료) 재접속 안내가 안 나올 수 있다 — 역할이

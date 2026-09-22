@@ -1305,6 +1305,20 @@ class Engine:
                         self._clock_skew_debounce[ip] = now
                 if should_log:
                     applog.log("decrypt_clock_skew", detail=f"from={ip} — 상대 PC와 시스템 시계가 2분 이상 차이납니다")
+            elif reason == "bad_tag":
+                # v1.90 — 이건 clock_skew와 달리 로그조차 안 남겨서, "같은 LAN에 있는데
+                # 서로 안 보인다"는 상황(예: exe만 복사해 줘서 secret.key가 서로 다른 경우,
+                # 또는 변조·스푸핑 시도)이 debug.log에 아무 흔적도 없었다 — 원인 진단이라도
+                # 가능하도록 clock_skew와 같은 방식(IP당 5분에 한 번)으로 남긴다.
+                ip = addr[0]
+                now = time.time()
+                with self._debounce_lock:
+                    should_log = now - self._clock_skew_debounce.get(("tag", ip), 0) >= 300.0
+                    if should_log:
+                        self._clock_skew_debounce[("tag", ip)] = now
+                if should_log:
+                    applog.log("decrypt_bad_tag",
+                               detail=f"from={ip} — secret.key가 다르거나(예: exe만 복사해 실행) 변조된 패킷")
             return
         try:
             d = json.loads(plain.decode("utf-8"))

@@ -158,6 +158,13 @@ class MafiaNetMixin:
         self._my_mafia_mates = None
         self._recruiter_host = None
         self.core.lobby_reset()
+        # v1.90 — 이 PC가 지난 판에는 방장이어서 실제 AI 에이전트를 만들었었다면(self.ai.players),
+        # 이번 판은 남이 여는 판이라 self.ai가 그대로 남아 있다. _show_vote_popup/_open_revote_popup은
+        # host·client 구분 없이 self.ai.players를 돌며 로컬 core.votes에 즉시 반영하는데, 남은
+        # 지난 판 에이전트가 이번 판 명단에 없는 이름으로 투표해 진행률·표시가 어긋났다
+        # (실제로 방장 역할이 두 PC 사이를 오갈 때만 재현되는, 한 프로세스짜리 테스트로는
+        # 드러나지 않는 종류의 결함). 클라이언트가 될 때는 AI를 직접 돌리지 않으므로 비운다.
+        self.ai.players = []
         self._unlock_defense_entry()
         self._set_night_theme(False)
         if hasattr(self, "mafia_role_btn"):
@@ -244,6 +251,49 @@ class MafiaNetMixin:
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
 
+    def _request_role_if_missing(self):
+        """v1.90 — 게임 시작 뒤 몇 초가 지나도 내 직업을 못 받았으면(hdm 유실) 호스트에게
+        다시 보내 달라고 요청한다. 토큰이 아직 없어도 보낼 수 있어야 하므로(그게 바로 이
+        문제 자체다) role_request는 _TOKEN_EVENTS에 없다 — 대신 이름·접속 주소 신원
+        확인(_sender_is)만으로 검증된다(recruit_join과 같은 방식)."""
+        if not self.mafia_active or self._mafia_is_host():
+            return
+        me = getattr(self.engine, "name", None)
+        if getattr(self, "_my_mafia_role", None) or (self.core.players.get(me) or {}).get("role"):
+            return
+        self._mafia_send_to_host("role_request", who=me)
+        # 그래도 안 오면(호스트가 이 요청 자체를 못 받았을 수도 있다) 한 번 더 시도한다.
+        self.root.after(4000, self._request_role_if_missing)
+
+    def _resend_role_dm(self, pname):
+        """v1.90 — 호스트 전용: role_request에 답해 직업 통보(hdm)를 다시 보낸다. 새 토큰을
+        만들지 않고 처음 배정 때 저장해 둔 토큰을 그대로 다시 쓴다(이미 그 토큰으로 투표 등을
+        보냈을 수도 있으니 바꾸면 오히려 그 뒤로 사칭 취급될 수 있다)."""
+        try:
+            if not pname or not isinstance(pname, str):
+                return
+            info = self.core.players.get(pname)
+            if not info or info.get("is_ai") or not info.get("role"):
+                return   # 아직 역할 배정 전이거나(호출 타이밍 이상) AI — 보낼 게 없다
+            role = info["role"]
+            if getattr(self, "_mafia_tokens", None) is None:
+                self._mafia_tokens = {}
+            tok = self._mafia_tokens.get(pname)
+            if not tok:
+                import secrets as _secrets
+                tok = self._mafia_tokens.setdefault(pname, _secrets.token_hex(8))
+            rn = ROLE_LABEL_KR.get(role, "알 수 없음")
+            msg = f"🃏 {pname}님, 당신의 직업은 '{rn}'입니다. 다른 사람에게 알리지 마세요."
+            kw = {"target": pname, "text": msg, "role": role, "tok": tok}
+            if role == "mafia":
+                mates = [n for n, p in self.core.players.items()
+                        if p.get("role") == "mafia" and n != pname]
+                if mates:
+                    kw["mates"] = mates
+            self._mafia_send_private(pname, "hdm", **kw)
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
     def _clear_host_ack(self, text):
         pend = getattr(self, "_ack_pending", None)
         if not pend:
@@ -265,7 +315,8 @@ class MafiaNetMixin:
         "user_say": "name", "lobby_chat": "sender", "mafia_say": "name",
         "vote_cast": "voter", "defense_vote_cast": "voter", "night_action": "actor",
         "mafia_to_ai": "name", "ghost_to_ai": "name",
-        "recruit_join": "name", "recruit_leave": "name"}
+        "recruit_join": "name", "recruit_leave": "name",
+        "role_request": "who"}
 
     def _ident(self):
         """이름 → 접속 주소(ip, port) 묶음. 새 모집이 시작될 때마다 비운다."""
@@ -416,6 +467,19 @@ class MafiaNetMixin:
     def _proto_authorized(self, t, ev, sender_name, peer=None):
         """[MAFIA1] 이벤트의 송신자 검증. 같은 LAN의 누구든 가짜 '게임 종료/역할 통보' 같은
         방장 전용 패킷이나 남의 이름으로 된 투표·밤 행동을 보낼 수 있던 문제를 막는다."""
+        # v1.90 — 세 번째 리뷰에서 "recruit_start를 검증하기 전에 상태 정리를 하는 건
+        # 미검증 패킷이 상태를 건드리는 것 아니냐"는 지적이 있어 검증 뒤로 옮겨 봤는데,
+        # 그러면 정작 이 정리가 존재하는 이유(내가 옛 방장으로 멈춰 있어 am_host가 True로
+        # 잘못 나오는 상태를 새 recruit_start가 도착했을 때 스스로 씻어내는 것)가 망가진다
+        # — am_host 판정 자체가 이 정리보다 먼저 이뤄지므로, 정리를 뒤로 미루면 stale한
+        # mafia_host_mode 때문에 애초에 "방장에게 온 방장 전용 이벤트"로 오인해 새
+        # recruit_start를 받기도 전에 걸러버린다(test_join_stale_state로 재현·확인).
+        # 이 함수가 보는 상태(recruiting/active/last host ts/피어 목록)는 전부 이
+        # 인스턴스 자신의 로컬 값이라, 패킷의 '내용'을 신뢰하는 게 아니라 '패킷이 왔다'는
+        # 사실만으로 내가 스스로 내 상태의 정합성을 다시 확인하는 것뿐이다 — 실제 상태
+        # 변경은 이미 스스로 판단한 진짜 정체(host 침묵 시간, 피어 목록 등)에만 좌우되고
+        # 패킷 발신자가 누구인지는 반영되지 않으므로, 인증 전에 불러도 위조로 악용할 수
+        # 있는 값이 아니다.
         if t == "recruit_start":
             self._clear_stale_host_state()
         me = getattr(self.engine, "name", None)
@@ -475,31 +539,11 @@ class MafiaNetMixin:
         """(호환용 빈 함수) 찬반 표 접수 안내도 add_mafia_system이 이미 방송한다."""
         return
 
-    def _mafia_sys_except(self, text, exclude=None):
-        """호스트 전용 — 시스템 안내(sys)를 모든 원격 참가자에게 보낸다. exclude(보통 방금 표를 낸 사람)는
-        자기 화면에 이미 안내가 떠 있으므로 뺀다."""
-        if not self._mafia_is_host():
-            return
-        from mafia_net import encode
-        pkt = encode("sys", text=text)
-        eng = getattr(self, "engine", None)
-        if not pkt or eng is None:
-            return
-        skip = None
-        if exclude:
-            try:
-                skip = self._mafia_peer_of(exclude)
-            except Exception:
-                skip = None
-        with eng.plock:
-            peers = list(eng.peers.keys())
-        for ip_port in peers:
-            if skip is not None and tuple(ip_port) == tuple(skip):
-                continue
-            try:
-                eng.send_message(ip_port[0], ip_port[1], pkt)
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
+    # v1.90 — _mafia_sys_except(사용되지 않던 죽은 코드)를 여기서 지웠다. add_mafia_system이
+    # 이미 _mafia_broadcast("sys", ...)로 방송하고 있고(v1.88 #7로 실제 명단에만 가도록
+    # 범위가 좁혀짐), 이 함수는 그 이전 방식대로 eng.peers 전체(구경꾼 포함)에게 직접
+    # 보내는 별도 경로였다 — 아무 데서도 호출되지 않아 실행되지는 않았지만, 남겨두면
+    # 나중에 누가 이걸 다시 쓰다가 v1.88의 범위 제한을 조용히 우회하게 될 위험이 있었다.
 
     def _on_mafia_proto_msg(self, text, sender_name, peer=None):
         """[MAFIA1] 메시지 수신시. 송신자 검증을 통과한 것만 처리한다."""
@@ -686,6 +730,15 @@ class MafiaNetMixin:
                     if my_role and me in self.core.players:
                         self.core.players[me]["role"] = my_role
                     self._apply_mafia_mates()
+                # v1.90 — 직업 통보(hdm)는 [MAFIA1] 제어 패킷이라 v1.87부터 오프라인
+                # 재전송(outbox) 대상에서 빠졌다(지난 판 상태가 뒤늦게 되살아나는 걸
+                # 막으려던 의도였는데, 그 부작용으로 역할 통보 한 통이 재전송 시도(3.6초)
+                # 안에 전부 실패하면 그 사람은 그 판 내내 역할도 토큰도 없이 조용히
+                # 방치됐다 — 호스트는 이미 토큰을 저장해 둔 뒤라 이후 투표·밤 행동도
+                # 전부 사칭으로 거부됨). 몇 초 안에 역할을 못 받으면 직접 재전송을
+                # 요청한다 — 몇 번이든 다시 물어도 안전하다(호스트가 이미 아는 역할을
+                # 그대로 다시 보낼 뿐 core 상태를 바꾸지 않는다).
+                self.root.after(4000, self._request_role_if_missing)
             self.refresh_mafia_phase_label()
         elif t == "night":
             self.core.phase_placeholder = None
@@ -821,6 +874,10 @@ class MafiaNetMixin:
         elif t == "night_action":
             # 클라이언트 → 호스트: 원격 참가자의 밤 행동(살해/치료/조사).
             self._host_receive_night_action(ev.get("actor"), ev.get("role"), ev.get("target"))
+        elif t == "role_request":
+            # v1.90 — 클라이언트 → 호스트: 처음 역할 통보(hdm)를 못 받았으니 다시 보내 달라.
+            if self._mafia_is_host():
+                self._resend_role_dm(ev.get("who"))
         elif t == "death":
             # v1.61 — 접속 끊김 등으로 인한 사망 처리 동기화(호스트가 판정).
             nm = ev.get("name")
@@ -1028,9 +1085,12 @@ class MafiaNetMixin:
                             self._on_game_end(winner)
                             return
                 elif online and was_disconnected:
+                    # v1.90 — 이 분기가 진짜 "재접속" 순간이다. v1.87에서 연속 확인 로직을
+                    # 넣으며 실수로 안내 문구를 아래 'elif online:'(매 폴링마다 참인 정상
+                    # 상태)으로 잘못 옮겨서, 실제로는 끊긴 적도 없는 사람에게 4초마다
+                    # "다시 연결되었습니다"가 반복 방송되고 있었다(실제 두 대 플레이에서
+                    # 채팅이 이 안내로 도배됨) — 원래 자리로 되돌린다.
                     known.discard(name)
-                    strikes.pop(name, None)
-                elif online:
                     strikes.pop(name, None)
                     if p.get("alive", True):
                         self.add_mafia_system(f"✅ {name}님이 다시 연결되었습니다.")
@@ -1038,6 +1098,8 @@ class MafiaNetMixin:
                         self.add_mafia_system(
                             f"✅ {name}님이 다시 연결되었습니다 — 접속이 끊긴 사이 사망 처리되어 "
                             "이번 판은 관전만 할 수 있습니다.")
+                elif online:
+                    strikes.pop(name, None)
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
         self._disconnect_watch_timer = self.root.after(4000, self._mafia_poll_disconnects)

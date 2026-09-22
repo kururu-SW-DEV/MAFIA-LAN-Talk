@@ -813,31 +813,26 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
             self._quit()
 
     def _show_tray_menu(self):
-        # v1.87 — TrackPopupMenu는 사용자가 메뉴를 닫을 때까지 안 돌아오는 모달 호출이다.
-        # 여기서 바로 부르면 그동안 _pump_body의 나머지(수신 이벤트 큐 처리, 게임 타이머)가
-        # 통째로 멈춘다 — 우클릭한 순간 마침 투표·밤 이벤트가 도착했다면 메뉴를 여는 것만으로
-        # 그 이벤트 처리가 늦어진다. Win32 호출 자체는 Tk를 건드리지 않으니 별도 스레드에서
-        # 열고, 고른 항목의 실행(Tk를 건드림)만 root.after로 메인 스레드에 되돌린다.
+        # v1.90 — TrackPopupMenu는 그 창을 소유한 스레드(=메인 스레드)에서 불러야
+        # SetForegroundWindow가 제대로 먹혀 바깥을 클릭했을 때 자동으로 닫히고, 키보드
+        # 화살표 탐색도 정상 동작한다. v1.87에서는 "메뉴가 열려 있는 동안 큐 처리가
+        # 밀린다"는 문제를 피하려고 이 호출을 별도 스레드로 옮겼는데, 그러면 메뉴를
+        # 소유하지 않은 스레드가 여는 꼴이 되어 위 동작들이 미묘하게 깨질 위험이 있다
+        # (실제 클릭 한 번으로는 잘 안 드러나는 종류의 결함이라 뒤늦게 지적됨). 지금은
+        # `_pump_body`가 이 함수를 부르기 전에 수신 큐를 먼저 다 비우도록 순서를 바꿔서,
+        # 메인 스레드에서 그대로 열어도 이미 온 이벤트를 놓치지 않는다 — 메뉴가 열려
+        # 있는 동안만 다음 틱이 늦어질 뿐이다.
         try:
             hwnd = int(self.root.wm_frame(), 16)
         except Exception:
             hwnd = int(self.root.winfo_id())
-        entries = self._tray_menu_entries()
-
-        def worker():
-            try:
-                cmd = show_native_menu(hwnd, entries)
-            except Exception as _e:
-                applog.swallowed(_e)
-                return
-            # Tkinter는 스레드 안전하지 않다 — root.after()조차 백그라운드 스레드에서 부르면
-            # "main thread is not in main loop"로 실패한다(다른 훅 콜백들과 같은 이유로
-            # 여기서도 Tk API를 직접 건드리지 않는다). 결과는 평범한 속성에 남기고
-            # 실제 실행은 이미 메인 스레드에서 도는 _pump_body의 다음 틱(최대 80ms)에 맡긴다.
-            if cmd:
-                self._tray_menu_result = cmd
-
-        threading.Thread(target=worker, daemon=True).start()
+        try:
+            cmd = show_native_menu(hwnd, self._tray_menu_entries())
+        except Exception as _e:
+            applog.swallowed(_e)
+            return
+        if cmd:
+            self._tray_menu_dispatch(cmd)
 
     def _toggle_always_on_top(self):
         if not self.engine:
@@ -1641,11 +1636,21 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
             if row_ref.get("_last_prev") != prev_txt:
                 row_ref["_last_prev"] = prev_txt
                 row_ref["prev"].config(text=prev_txt)
-            if row_ref.get("_badge_packed"):
-                row_ref["badge"].pack_forget()
-                row_ref["_badge_packed"] = False
             if "time" in row_ref:
                 row_ref["time"].config(text="")
+            # v1.90 — 이 방은 배지가 항상 강제로 꺼져 있었다(구경꾼 로비 채팅·게임 중 시스템
+            # 안내가 다른 탭을 보는 동안 도착해도 알 방법이 전혀 없었다 — "로비 채팅이
+            # 안 온다"는 문의의 실제 원인. 다른 방과 똑같이 unread 카운트로 배지를 켠다).
+            n = self.unread.get(("mgame",), 0)
+            if n:
+                row_ref["badge"].config(text=str(n))
+                if not row_ref.get("_badge_packed"):
+                    row_ref["badge"].pack(anchor="e", pady=(2, 0))
+                    row_ref["_badge_packed"] = True
+            else:
+                if row_ref.get("_badge_packed"):
+                    row_ref["badge"].pack_forget()
+                    row_ref["_badge_packed"] = False
             return
         key = it["key"]
         selected = (self.current == key)
@@ -2636,13 +2641,6 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
         if getattr(self, "_notify_click_pending", False):
             self._notify_click_pending = False
             self._on_notify_click()
-        if getattr(self, "_tray_menu_pending", False):
-            self._tray_menu_pending = False
-            self._show_tray_menu()
-        result = getattr(self, "_tray_menu_result", None)
-        if result:
-            self._tray_menu_result = None
-            self._tray_menu_dispatch(result)
         while True:
             try:
                 ev = self.q.get_nowait()
@@ -2721,6 +2719,17 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
                 self._refresh_me_avatar()
             elif kind == "search_results":
                 self._apply_search_results(ev["gen"], ev["q"], ev["results"])
+        # v1.90 — 트레이 우클릭 메뉴는 큐를 다 비운 뒤, 여기 메인 스레드에서 그대로 연다.
+        # TrackPopupMenu·SetForegroundWindow는 그 창을 소유한 스레드가 불러야 바깥 클릭
+        # 시 자동으로 닫히고 키보드 탐색이 정상 동작한다(Win32 문서에 명시된 스레드 소유
+        # 규칙) — v1.87에서는 "메뉴가 열려 있는 동안 큐 처리가 밀린다"는 문제를 피하려고
+        # 별도 스레드로 옮겼지만, 그러면 메뉴 자체가 미묘하게 오동작할 수 있는 더 큰
+        # 위험을 대신 만든다(손으로 다시 확인하지 않고는 알기 어려운 종류의 결함이라
+        # 세 번째 리뷰에서 지적됨). 대신 큐를 먼저 비우는 순서로 바꿔, 메뉴가 열려 있는
+        # 동안 새로 들어오는 이벤트가 다음 틱까지만 늦어지고 유실되지는 않게 한다.
+        if getattr(self, "_tray_menu_pending", False):
+            self._tray_menu_pending = False
+            self._show_tray_menu()
 
     # ---------- 칸 비우기 ----------
     def _show_empty(self, msg):

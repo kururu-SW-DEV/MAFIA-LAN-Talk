@@ -426,11 +426,24 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         self._mafia_disconnected = set()   # v1.42 — 새 판 시작, 접속 상태 추적 초기화
         self._mafia_disconnect_strikes = {}  # v1.87 — 연속 누락 횟수도 새 판마다 초기화
         self._mafia_start_disconnect_watch()
+        # v1.90 — 생존자 현황 줄과 [🛑 게임 강제 종료] 버튼은 지금까지 _select_mafia_room
+        # (게임방 탭을 "누를 때"만) 안에서만 갱신·배치됐다. 방장은 [게임 시작]을 이미
+        # 게임방 화면 안에서 누르므로 다음에 다시 들어올 때까지 둘 다 안 보였다(실측
+        # 지적) — 게임이 시작되는 이 시점에 바로 반영한다.
+        self.refresh_mafia_phase_label()
+        if hasattr(self, "mafia_force_quit_btn") and self.current == self.mafia_room_key():
+            self.mafia_force_quit_btn.pack(side="right", padx=(6, 6), pady=8)
 
         self._police_claims = {}
         self._reset_ghost_state()
         self._doctor_claims = {}
         self._bluff_count = 0
+        # v1.90 — 이 둘은 이름별 쿨다운/타임스탬프라(mafia_ui_ai.py) 판이 바뀌어도 지우지
+        # 않고 있었다. 사람 이름이나 AI 페르소나 이름이 다음 판에 다시 나오면(흔함 — AI
+        # 이름 풀이 한정적) 지난 판 막판의 쿨다운이 그대로 남아 새 판 초반 경찰 옹호·AI의
+        # 사람 호명이 조용히 억제됐다.
+        self._defend_cooldown = {}
+        self._human_ask_ts = {}
         self.ai.assign_roles(assigned, self.core, self._claims_for)
         role_names = ROLE_LABEL_KR
         # v1.61 — 명단(roster) 브로드캐스트를 역할 개인 쪽지보다 먼저 보낸다.
@@ -556,6 +569,21 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
     def _mafia_reset_to_lobby(self):
         """게임을 끝내고 로비 상태로 되돌리는 공통 마무리 — 정상 종료(_on_game_end)와
         강제 종료(mafia_force_quit_clicked)가 함께 쓴다."""
+        # v1.90 — core.phase를 LOBBY로 되돌리는 걸 빼먹고 있었다. 내가 방장으로 새로
+        # 시작할 때는 _launch_game_with_recruits가 스스로 core.lobby_reset()을 부르니
+        # 안 드러났지만, 이 PC가 다음 판에서 '다른 사람이 여는 게임'의 클라이언트가 되면
+        # 원격 참가자 쪽 "start" 처리부가 'core.phase == LOBBY'일 때만 명단을 채운다
+        # (mafia_ui_net.py) — phase가 END(또는 강제 종료 시점의 낮/밤)로 남아 있으면 이
+        # 조건이 조용히 거짓이 되어, 방장을 한 번이라도 해 본 PC는 그 다음 판에서 core가
+        # 계속 비어(또는 지난 판 그대로) 투표·밤 행동·생존자 판정이 전부 어긋난다.
+        self.core.lobby_reset()
+        # v1.90 — 다음 판에 이 PC가 남이 여는 게임의 클라이언트가 될 수도 있는데, 그때
+        # _show_vote_popup/_open_revote_popup은 host·client 구분 없이 self.ai.players를
+        # 돌며 로컬 core.votes에 반영한다 — 이번 판의(이제는 낡은) 실제 AI 에이전트가
+        # 그대로 남아 있으면 다음 판 명단에 없는 이름으로 투표해 진행률이 어긋난다.
+        # 내가 다시 방장이 되면 _launch_game_with_recruits의 spawn_all이 어차피 통째로
+        # 새로 채우므로 지워도 안전하다.
+        self.ai.players = []
         self.mafia_active = False
         # 판이 끝나면 방장 신분도 내려놓는다. 그대로 두면 이 PC가 다음 판에서 클라이언트가 됐을 때
         # 방장 전용 이벤트(recruit_start 등)를 '방장에게 온 것'으로 보고 전부 버려 참가 신청 버튼이 안 뜬다.

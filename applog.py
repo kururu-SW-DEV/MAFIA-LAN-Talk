@@ -63,22 +63,33 @@ def log(tag, exc=None, detail=""):
 
 
 _swallowed_seen = set()
+_swallowed_counts = {}   # site -> 발생 횟수(로그는 한 번만 남기지만 세는 건 계속한다)
+_SWALLOWED_RELOG_AT = (10, 100, 1000, 10000)   # 이 횟수째마다 한 번 더 남겨 지속적 실패를 드러낸다
 
 
 def swallowed(exc):
     """`except Exception: pass`로 조용히 삼키던 예외를 기록한다(동작은 그대로, 흔적만 남긴다).
     예외를 삼킨 위치(파일:줄·함수)를 자동으로 붙이고, 같은 위치·같은 예외 종류는 한 번만 남겨
-    화면 갱신 같은 반복 경로에서도 로그가 넘치지 않게 한다. 기록 실패는 무시한다."""
+    화면 갱신 같은 반복 경로에서도 로그가 넘치지 않게 한다. 기록 실패는 무시한다.
+
+    v1.90 — "한 번만 남긴다"는 순간적인 실수와 계속 반복되는 진짜 고장(예: 방송마다 매번
+    실패)을 debug.log에서 똑같은 한 줄로 만들어 구별할 수 없게 했다. 위치·종류가 같아도
+    발생 횟수는 계속 세고, 10/100/1000/10000번째마다 그 누적 횟수를 남긴다 — 로그가
+    넘치진 않으면서도 "한 번 있었던 일"과 "세션 내내 계속되는 일"을 구분할 수 있다."""
     try:
         import sys
         fr = sys._getframe(1)
         site = (fr.f_code.co_filename, fr.f_lineno, type(exc).__name__)
         with _lock:
-            if site in _swallowed_seen:
-                return
+            first = site not in _swallowed_seen
             _swallowed_seen.add(site)
-        log("swallowed", exc=exc,
-            detail=f"{os.path.basename(site[0])}:{site[1]} {fr.f_code.co_name}")
+            n = _swallowed_counts[site] = _swallowed_counts.get(site, 0) + 1
+            if not first and n not in _SWALLOWED_RELOG_AT:
+                return
+        detail = f"{os.path.basename(site[0])}:{site[1]} {fr.f_code.co_name}"
+        if not first:
+            detail += f" (누적 {n}회 — 반복되는 실패일 수 있음)"
+        log("swallowed", exc=exc, detail=detail)
     except Exception:
         pass
 

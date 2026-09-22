@@ -749,9 +749,21 @@ class MafiaViewMixin:
             self._refresh_ghost_button()
             txt = self._mafia_roster_text()
             if txt and getattr(self, "mafia_bar_is_game", False) and self.current == self.mafia_room_key():
-                lbl.configure(text=txt)
-                if not lbl.winfo_ismapped():
-                    lbl.pack(fill="x", before=self.chat_wrap)
+                # v1.90 — 이 라벨은 이모지(🟢💀🤖)가 섞여 있어 enable_color_emoji가 매번
+                # PIL로 다시 그려 새 PhotoImage를 만든다. 2초마다 도는 틱인데 현황이 그새
+                # 안 바뀐 경우(흔함 — 아무도 안 죽거나 끊기지 않은 대부분의 틱)에도 매번
+                # 다시 그리고 있었다 — 텍스트가 그대로면 건드리지 않는다.
+                if lbl.cget("text") != txt:
+                    lbl.configure(text=txt)
+                # v1.90 — "이미 붙어 있으면 다시 안 붙인다"였는데, 이 라벨과 mafia_bar는 둘 다
+                # "chat_wrap 바로 앞"을 기준으로 따로따로 pack된다. 게임 중에도 계속 도는
+                # 2초 틱(_mafia_roster_tick)이 마피아방을 떠나 있는 동안에도 멈추지 않고 이
+                # 라벨을 계속 건드리는데, 방을 나갔다 들어올 때 mafia_bar만 다시 배치되고
+                # (이미 매핑돼 있다고 判단된) 이 라벨은 그대로 둔 적이 있으면, 상대적 순서가
+                # "생존자 목록 → 상태바"로 뒤집힌 채 굳어버렸다(실사용 지적 — 재현 확인).
+                # pack은 이미 매핑된 위젯에 다시 불러도 옵션(특히 before)대로 위치를 다시
+                # 잡아주므로, 매번 다시 불러 mafia_bar 바로 아래라는 위치를 스스로 바로잡는다.
+                lbl.pack(fill="x", before=self.chat_wrap)
             else:
                 lbl.pack_forget()
         except Exception as _swallow_e:
@@ -846,6 +858,19 @@ class MafiaViewMixin:
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
 
+    def _mafia_mark_unread(self):
+        """v1.90 — 마피아 게임방 사이드바 항목은 배지가 항상 강제로 꺼져 있어서, 다른
+        탭을 보는 동안 로비 채팅·게임 안내가 와도 알 방법이 없었다("로비 채팅이 상대에게
+        안 온다"는 문의의 실제 원인 중 하나) — 지금 이 방을 보고 있지 않을 때만 다른
+        방(dm/그룹)과 같은 방식으로 안 읽음 배지를 올린다."""
+        try:
+            if self.current == ("mgame",):
+                return
+            self.unread[("mgame",)] = self.unread.get(("mgame",), 0) + 1
+            self._refresh_list()
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
     def add_mafia_bubble(self, text, label, mine=False):
         rec = {"kind": "text", "mine": mine, "label": label, "ts": time.time(),
                "text": text, "is_system": False}
@@ -858,6 +883,8 @@ class MafiaViewMixin:
         if self._is_mafia_room_active():
             self._hide_empty()
             self._mafia_append_live(rec)
+        elif not mine:
+            self._mafia_mark_unread()
 
     def add_mafia_system(self, text):
         # 랜톡 chat_renderer._draw_record와 호환: is_system=True면 시스템 구분선으로 그려짐
@@ -866,6 +893,8 @@ class MafiaViewMixin:
         if self._is_mafia_room_active():
             self._hide_empty()
             self._mafia_append_live(rec)
+        else:
+            self._mafia_mark_unread()
         if getattr(self, "mafia_host_mode", False) and self.mafia_active:
             self._mafia_broadcast("sys", text=text)
         self._ai_observe_system(text)
@@ -911,4 +940,11 @@ class MafiaViewMixin:
             self._mafia_broadcast("asay", name=name, text=text)
 
     def _is_mafia_room_active(self):
-        return (self.current and self.current[0] == "mgame" and self.mafia_active)
+        # v1.90 — mafia_active(게임이 실제로 진행 중인지)까지 요구하고 있었다. 이 함수는
+        # add_mafia_bubble/add_mafia_system/add_mafia_host_dm이 "지금 실시간으로 화면에
+        # 이어 그릴지"를 정하는 데만 쓰이는데, 그 조건에 mafia_active를 넣으면 모집 전
+        # 로비 채팅 단계(아직 게임 시작 전이라 mafia_active=False)에서는 게임방 탭을 보고
+        # 있어도 새 메시지가 즉시 안 그려지고 기록에만 쌓였다 — 다른 방을 갔다 오거나
+        # 탭을 다시 눌러 전체를 다시 그릴 때만 보였다("마피아 게임탭을 눌러야만 로비
+        # 채팅이 보인다"는 문의의 실제 원인). 지금 그 방을 보고 있는지만 확인한다.
+        return bool(self.current and self.current[0] == "mgame")

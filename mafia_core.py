@@ -188,9 +188,16 @@ class GameCore:
 
     # ---------- 밤 ----------
     def set_night_target(self, target):
-        """마피아 밤 살해 지목 — 자기 자신은 대상에서 제외."""
+        """마피아 밤 살해 지목 — 자기 자신은 대상에서 제외.
+        v1.90 — 대상이 실제 살아있는 참가자인지 확인하는 검사가 없었다. 그래서 밤 패널이 뜬
+        뒤 접속 끊김으로 그 대상이 이미 사망 처리된 경우(패널 자체는 열린 시점의 스냅샷이라
+        갱신되지 않음), 여기서는 그냥 True를 돌려줘 마피아에게 "살해 지시 접수"가 뜨지만
+        실제로는 mafia_night_vote(다수 지목 합의)가 같은 대상을 조용히 거부해서 밤이 끝나도
+        아무 일도 없었다 — 접수 확인 자체를 틀리게 주지 않도록 여기서도 같은 기준으로 검사."""
         with self.lock:
             if target:
+                if target not in self.players or not self.players[target].get("alive"):
+                    return False        # 존재하지 않거나 이미 죽은 대상
                 mafia_names = [n for n, p in self.players.items()
                                if p["role"] == "mafia" and p["alive"]]
                 if target in mafia_names:

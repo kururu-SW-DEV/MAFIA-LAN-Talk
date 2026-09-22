@@ -42,8 +42,16 @@ app._select(("mgame",)); root.update()
 
 
 class ClientStub(DialogsMixin, MafiaUIMixin):
+    """B·C(구경꾼) 대역 — 실제 네트워크/프로토콜 처리는 진짜 코드를 그대로 타되, 무거운
+    캔버스 채팅 렌더링만 없는 경량 스텁(다른 스텁 기반 테스트와 동일한 패턴)."""
     def _on_msg(self, ev):
         return RealApp._on_msg(self, ev)
+
+    def _hide_empty(self):
+        pass
+
+    def _mafia_append_live(self, rec):
+        pass
 
 
 def make_stub(name, port, root_, targets):
