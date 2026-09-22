@@ -151,19 +151,34 @@ def _llm_call_once(messages, max_tokens, timeout, meta, _reasoning=True):
     return None
 
 
+_LLM_CACHE_TTL = 12 * 3600
+_LLM_CACHE_MAX = 200   # v1.88 — 캐시 키는 사회자 프롬프트(전체 참가자 명단이 매번 섞여 들어감)라
+                        # 판마다 거의 항상 새 키가 생긴다. 만료된 항목도 지금까지는 지우지 않고
+                        # 그냥 지나쳤을 뿐이라, 세션을 오래 켜 두고 여러 판을 돌릴수록 메모리에
+                        # 계속 쌓이기만 했다 — 넣을 때 만료분을 먼저 청소하고 상한을 둔다.
+
+
 def host_llm_cached(system, user, max_tokens=350):
     """캐시 포함 LLM 호출(사회자 스타일 단발 호출). 최근 대화 전용 캐시."""
     cache_key = hash((system, user, max_tokens))
     now = time.time()
     with _cache_lock:
         hit = _llm_cache.get(cache_key)
-        if hit and now - hit["ts"] < 12 * 3600:
+        if hit and now - hit["ts"] < _LLM_CACHE_TTL:
             return hit["text"]
     text = _llm_call([{"role": "system", "content": system},
                       {"role": "user", "content": user}], max_tokens=max_tokens)
     if text:
         with _cache_lock:
             _llm_cache[cache_key] = {"ts": now, "text": text}
+            if len(_llm_cache) > _LLM_CACHE_MAX:
+                stale = [k for k, v in _llm_cache.items() if now - v["ts"] >= _LLM_CACHE_TTL]
+                for k in stale:
+                    del _llm_cache[k]
+                if len(_llm_cache) > _LLM_CACHE_MAX:
+                    # 그래도 넘치면(전부 아직 안 만료) 가장 오래된 것부터 지운다
+                    for k in sorted(_llm_cache, key=lambda k: _llm_cache[k]["ts"])[:len(_llm_cache) - _LLM_CACHE_MAX]:
+                        del _llm_cache[k]
     return text
 
 

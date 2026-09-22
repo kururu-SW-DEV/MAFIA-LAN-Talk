@@ -12,7 +12,14 @@ class MafiaNetMixin:
 
     # ==================== P2P 배포 — 호스트가 이벤트 전송 ====================
     def _mafia_broadcast(self, ev_type, **kw):
-        """게임 이벤트를 모든 접속 피어에게 DM 프로토콜로 전송(호스트 모드에서만)."""
+        """게임 이벤트를 접속 피어에게 DM 프로토콜로 전송(호스트 모드에서만).
+
+        v1.88 — 게임이 시작된 뒤(mafia_active)에는 명단(core.players)에 있는 실제 참가자에게만
+        보낸다. 예전에는 모집 신청 여부와 무관하게 LAN에서 발견된 모든 피어(eng.peers)로 보냈다
+        — 그러면 직업 공개(🎭)를 포함한 매 시스템 줄·투표 완료 알림이 게임에 참가하지도 않은
+        구경꾼의 클라이언트에도 도착했다(화면 표시만 _in_game으로 걸러졌을 뿐, 패킷 자체는 갔다).
+        모집 중(recruit_*)에는 아직 명단이 없으므로 예전처럼 LAN 전체로 보낸다 — 그게 곧
+        모집 광고 그 자체다."""
         try:
             from mafia_net import encode
             pkt = encode(ev_type, **kw)
@@ -21,8 +28,20 @@ class MafiaNetMixin:
             eng = getattr(self, "engine", None)
             if eng is None:
                 return
-            with eng.plock:
-                peers = list(eng.peers.keys())
+            core = getattr(self, "core", None)
+            if self.mafia_active and core is not None:
+                me = getattr(eng, "name", None)
+                targets = set()
+                for n, p in list(core.players.items()):
+                    if p.get("is_ai") or n == me:
+                        continue
+                    ip_port = self._mafia_peer_of(n)
+                    if ip_port:
+                        targets.add(ip_port)
+                peers = list(targets)
+            else:
+                with eng.plock:
+                    peers = list(eng.peers.keys())
             for ip_port in peers:
                 ip, port = ip_port
                 try:
@@ -529,7 +548,13 @@ class MafiaNetMixin:
                 self._ghost_relay_humans(spk, ev.get("text", ""))     # 다른 사람 사망자에게(호스트가 죽었으면 호스트 화면에도)
                 self._ghost_ai_reply(ev.get("text", ""), speaker=spk)
         elif t == "ghost_say":
-            # 호스트의 사망 AI가 보낸 유령방 답장(개인 전송) — 내 유령방이 열려 있을 때만 표시
+            # 호스트의 사망 AI가 보낸 유령방 답장(개인 전송) — 내 유령방이 열려 있을 때만 표시.
+            # v1.88 검토 — mafia_say처럼 수신측에서도 '내가 지금 사망 상태인지' 확인하는 걸
+            # 시도했으나, 클라이언트의 로컬 core.players[me]["alive"]는 호스트가 보낸 death
+            # 브로드캐스트를 받아야 갱신되는 값이라 실제로는 정상적인 지연이 있다(방금 죽어서
+            # 유령방으로 안내된 순간에도 아직 True로 남아 있을 수 있음) — 그 상태에서 정당한
+            # ghost_say까지 걸러지는 게 더 나쁜 회귀라 되돌렸다(test_multiplayer_sync로 확인).
+            # 대신 주소 오배달 자체는 송신측 _mafia_peer_of의 ident 우선 바인딩으로 막는다.
             if ev.get("text") and isinstance(ev.get("text"), str):
                 self._append_ghost(f"👻 {ev.get('name') or '?'}: {ev.get('text')}", ai=True)   # 창이 닫혀 있어도 누적 기록
         elif t == "mafia_to_ai":
@@ -564,7 +589,11 @@ class MafiaNetMixin:
             # 개인 쪽지 — target==내 이름일 때만 표시
             me = getattr(self.engine, "name", None)
             if ev.get("target") == me:
-                msg_txt = ev.get("text", "")
+                # v1.88 — text가 문자열이 아니면(다른 버전 호스트·손상된 패킷) 아래
+                # "f\"'{r_kr}'\" in msg_txt"에서 TypeError가 나서, 이 사람만 역할 통보를
+                # 통째로 못 받고 그 판 내내 직업 없는 시민처럼 게임하게 된다.
+                msg_txt = ev.get("text")
+                msg_txt = msg_txt if isinstance(msg_txt, str) else ""
                 self.add_mafia_host_dm(msg_txt)
                 if ev.get("tok") and not self._mafia_is_host():
                     self._my_tok = ev.get("tok")
@@ -608,7 +637,12 @@ class MafiaNetMixin:
             # 시작 후에도 계속 빈 채로 남아 생존자 조회·투표·밤 행동 렌더링이
             # 전부 불가능했다(복수 인간 플레이 전수 검토 지적).
             if not self._mafia_is_host() and getattr(self, "core", None):
-                roster = ev.get("players", [])
+                # v1.88 — recruit_start/recruit_update는 v1.74에서 _name_list로 이미 방어했는데
+                # 이 "start" 이벤트는 빠져 있었다. players가 리스트가 아니면(손상된 패킷·다른
+                # 버전 호스트) 아래 "for entry in roster"가 TypeError를 내서 self._in_game이
+                # 대입되기도 전에 멈추고, 이 사람은 게임 화면 자체를 못 본다.
+                roster = ev.get("players")
+                roster = roster if isinstance(roster, (list, tuple)) else []
                 with self.core.lock:
                     if self.core.phase == Phase.LOBBY:
                         for entry in roster:
@@ -719,7 +753,9 @@ class MafiaNetMixin:
         elif t == "verdict":
             # v1.61 — 처형 확정이면 원격 core에서도 사망 처리 + 본인이면 유령방
             vname, vrole = ev.get("name"), ev.get("role")
-            if ev.get("result") == "executed" and vname in self.core.players:
+            # v1.88 — vname이 문자열이 아니면(손상된 패킷·다른 버전) "in self.core.players"가
+            # 딕셔너리 키 비교라 해시 불가능한 값(list/dict 등)에서 TypeError를 낸다.
+            if ev.get("result") == "executed" and isinstance(vname, str) and vname in self.core.players:
                 self.core.players[vname]["alive"] = False
                 if vrole:
                     self.core.players[vname]["role"] = vrole
@@ -894,15 +930,33 @@ class MafiaNetMixin:
             strikes = getattr(self, "_mafia_disconnect_strikes", None)
             if strikes is None:
                 strikes = self._mafia_disconnect_strikes = {}
+            # v1.88 — 예전에는 사람 참가자마다 _mafia_peer_of(이름 안 묶였으면 eng.plock을
+            # 잡고 피어 전체를 훑음) → get_peer(다시 eng.plock)를 따로 불러, 참가자 N명이면
+            # 4초마다 최대 2N번 락을 잡고 피어 목록을 매번 훑었다(호스트 메인 스레드가
+            # _send_reliable 워커·프레즌스 루프와 경합). eng.peers를 이 폴링 한 번에 딱
+            # 한 번만 복사해 두고, 그 사본으로 모든 참가자의 이름을 맞춰본다.
+            eng = self.engine
+            with eng.plock:
+                peer_snapshot = [((ip, port), dict(p)) for (ip, port), p in eng.peers.items()]
+            ident = self._ident()
+            now = time.time()
             for name, p in list(self.core.players.items()):
                 if p.get("is_ai") or name == me:
                     continue
-                peer_key = self._mafia_peer_of(name)
+                bound = ident.get(name)
                 online = False
-                if peer_key:
-                    info = self.engine.get_peer(peer_key[0], peer_key[1])
-                    if info and (time.time() - info.get("last", 0)) < PEER_TIMEOUT:
-                        online = True
+                if bound is not None:
+                    for (ip, port), info in peer_snapshot:
+                        if (ip, port) == bound:
+                            if now - info.get("last", 0) < PEER_TIMEOUT:
+                                online = True
+                            break
+                else:
+                    for (ip, port), info in peer_snapshot:
+                        alias = eng.get_alias((ip, port)) or ""
+                        if (alias == name or info.get("name", "") == name) and now - info.get("last", 0) < PEER_TIMEOUT:
+                            online = True
+                            break
                 was_disconnected = name in known
                 if not online and not was_disconnected:
                     # v1.87 — 와이파이에서는 프레즌스(UDP 브로드캐스트)가 몇 번 연속으로

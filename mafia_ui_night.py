@@ -376,10 +376,17 @@ class MafiaNightMixin:
         lbl_nt.pack(pady=(0, 8))
         emoji_render.apply(lbl_nt, FONT_SM)
         state = {"n": NIGHT_ACTION_WINDOW}
+        # v1.88 — 예전에는 '오버레이가 있는지'만 봤는데, _mafia_overlay_open이 이전 팝업의
+        # close()를 부르면서 취소 예약도 같이 하지만(_wrap_overlay_close_with) 이미 큐에서
+        # 빠져나와 실행 중이던 이 틱은 취소되지 않는다. 그 순간 다른 밤 행동 팝업이 이미
+        # 대신 열려 있으면 '오버레이가 있다'는 것만으로 통과해, 방금 새로 연 팝업(이미
+        # 다른 행동을 고르는 중일 수 있음)을 이 낡은 타이머가 "시간 초과"로 잘못 닫아버린다.
+        # 이 패널 자신(body가 속한 오버레이)이 지금도 활성 오버레이일 때만 진행한다.
+        my_panel = getattr(self, "_mafia_overlay", None)
 
         def _tick():
             self._night_pick_tick = None
-            if not getattr(self, "_mafia_overlay", None):
+            if getattr(self, "_mafia_overlay", None) is not my_panel:
                 return
             state["n"] -= 1
             if state["n"] <= 0:
@@ -714,11 +721,18 @@ class MafiaNightMixin:
             victim_t, res = rep
             verdict = "마피아입니다!" if res == "mafia" else "마피아가 아닙니다."
             me = getattr(self.engine, "name", None)
+            # v1.88 — 예전에는 "내가 호스트 경찰인가" → "AI 경찰이 있는가" 두 갈래뿐이었다.
+            # 경찰이 원격 인간이면 둘 다 아니라서 이 아침 통보가 아무 데도 가지 않는 죽은
+            # 분기였다(그 순간까지 실제로는 조사 클릭 시점의 hdm 쪽지로만 전달돼 왔다 —
+            # 만약 앞으로 사람 경찰도 밤 자동 대체 경로를 타게 되면 여기서 놓치게 된다).
+            # 지금 실제로 경찰 역할을 쥔 사람을 명단에서 직접 찾아 그 사람 기준으로 보낸다.
+            police_name = next((n for n, p in self.core.players.items()
+                                if p.get("role") == "police"), None)
             pl_police = next((pl for pl in getattr(self, "ai", None) and self.ai.players or []
                               if pl.role == "police"), None)
-            if self.core.players.get(me, {}).get("role") == "police":
+            if police_name == me:
                 self._ghost_dm(f"🕵 [밤 조사 결과 — 나에게만] {victim_t}님은 {verdict}")
-            elif pl_police:
+            elif pl_police and (self.core.players.get(police_name) or {}).get("is_ai"):
                 # AI 경찰 — 기억에 적립(발화 참조용, 노출 금지 지시 포함)
                 if hasattr(pl_police, "add_intel"):
                     pl_police.add_intel(victim_t, res)
@@ -726,6 +740,12 @@ class MafiaNightMixin:
                     {"role": "user",
                      "content": f"[사회자 밤 비밀 통보 — 절대 채팅에 노출 금지] "
                                 f"조사 결과: {victim_t} = {verdict}"})
+            elif police_name:
+                # 원격 인간 경찰 — 조사 클릭 시점에 이미 hdm으로 받았겠지만(v1.85), 앞으로
+                # 생길 수 있는 자동 대체 경로까지 대비해 항상 명시적으로 다시 보낸다
+                # (중복 수신은 host-경찰과 마찬가지로 무해하다).
+                self._mafia_send_private(police_name, "hdm", target=police_name,
+                                         text=f"🕵 [밤 조사 결과 — 나에게만] {victim_t}님은 {verdict}")
             self.core.police_report = None
         winner = self.core.check_winner()
         if winner:

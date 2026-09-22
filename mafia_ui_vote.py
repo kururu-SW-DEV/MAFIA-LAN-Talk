@@ -972,7 +972,10 @@ class MafiaVoteMixin:
                 setattr(self, attr, None)
 
     def _force_resolve_defense(self, name):
-        """60초 안전망(v1.23) — 미투자 기권 간주 강제 개표(멈춤 방지)."""
+        """60초 안전망(v1.23) — 미투표는 기권으로 강제 개표(멈춤 방지).
+        v1.88 — 기권을 False(반대)로 채워 넣으면 표를 못 낸 것(패킷 유실 등)과 실제로
+        반대를 누른 것이 결과에서 구별되지 않았다. None으로 남겨 core.execute_defense가
+        찬반 어느 쪽으로도 세지 않게 한다."""
         try:
             if getattr(self.core, "defendant", None):
                 c = self.core
@@ -980,7 +983,7 @@ class MafiaVoteMixin:
                           if p["alive"] and n != c.defendant]
                 for n in voters:
                     if n not in c.defense_yes:
-                        c.defense_yes[n] = False   # 기권 = 반대 취급
+                        c.defense_yes[n] = None   # 기권 — 찬반 어느 쪽도 아님
                 self._resolve_defense(name)
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
@@ -993,6 +996,11 @@ class MafiaVoteMixin:
             # AI 표는 이미 예약돼 있고, 유저 표 없이도 30초 안전망이 개표 보장
             return
         body = self._mafia_overlay_open("⚖ 최후 변론 — 처형 찬/반", w=320, h=None)
+        # v1.88 — 아래 두 카운트다운(_tick10, _tick_defense_vote)이 '오버레이가 있으면 진행'만
+        # 확인하면, 다른 팝업이 이 자리를 밀어내고 뜬 순간(교체는 취소 예약도 같이 하지만
+        # 이미 실행 중이던 틱은 못 막는다) 그 새 팝업을 이 낡은 타이머가 대신 닫아버리고
+        # "시간 초과"를 잘못 공지할 수 있다. 이 패널 자신일 때만 진행하도록 식별자로 남긴다.
+        my_panel = getattr(self, "_mafia_overlay", None)
         tk.Label(body, text=f"'{name}'을(를) 처형할까요?", fg=M_TEXT_LIGHT,
                  bg=C_CARD, font=(FONT_FAM, 12, "bold"),
                  wraplength=280, justify="center").pack(pady=(14, 10), padx=16)
@@ -1024,6 +1032,8 @@ class MafiaVoteMixin:
             b_close.pack(pady=(0, 10))
             def _tick10():
                 if getattr(self, "_defense_popup10_cancelled", False):
+                    return
+                if getattr(self, "_mafia_overlay", None) is not my_panel:
                     return
                 state["n"] -= 1
                 if state["n"] <= 0:
@@ -1085,7 +1095,7 @@ class MafiaVoteMixin:
         state = {"n": DEFENSE_VOTE_WINDOW}
         def _tick_defense_vote():
             self._defense_vote_tick = None
-            if not getattr(self, "_mafia_overlay", None):
+            if getattr(self, "_mafia_overlay", None) is not my_panel:
                 return
             state["n"] -= 1
             if state["n"] <= 0:

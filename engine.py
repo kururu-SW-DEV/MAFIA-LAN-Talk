@@ -10,6 +10,7 @@ import collections
 import hashlib
 import json
 import os
+import queue
 import re
 import shutil
 import socket
@@ -69,6 +70,14 @@ class Engine:
         self.glock = threading.RLock()
         self.pending = {}               # msg_id -> threading.Event (ACK 대기)
         self.pending_lock = threading.Lock()
+        # v1.88 — (ip,port)별 신뢰 전송 큐/워커. 예전에는 _send_reliable가 부를 때마다 스레드를
+        # 새로 만들어서(threading.Thread(...).start()), 마피아 방송처럼 짧은 시간에 같은 상대에게
+        # 여러 통을 보내면 스레드가 우르르 생겼다 사라졌다 — 스레드 생성이 메인 스레드에서
+        # 일어나는 타이밍에 GC와 겹쳐 교착 났던 사고(v1.77)의 근본 원인이기도 했다. 상대별로
+        # 워커 하나만 두고 큐에 쌓인 순서대로 보낸다.
+        self._reliable_queues = {}      # (ip,port) -> queue.Queue
+        self._reliable_workers = {}     # (ip,port) -> Thread(살아있으면)
+        self._reliable_lock = threading.Lock()
         self.log_lock = threading.Lock()
         self.settings_lock = threading.RLock()
         self.hidden = set()             # {("dm",ip,port), ("grp",gid)} — 목록에서 숨긴 대화
@@ -1957,14 +1966,50 @@ class Engine:
         return ok
 
     def _send_reliable(self, pkt, ip, port, on_done=None):
-        """백그라운드 스레드에서 _send_reliable_wait를 실행하는 논블로킹 버전."""
-        def worker():
-            ok = self._send_reliable_wait(pkt, ip, port)
-            if on_done:
-                on_done(ok)
-
-        threading.Thread(target=worker, daemon=True).start()
+        """백그라운드에서 _send_reliable_wait를 실행하는 논블로킹 버전 — (ip,port)당 워커
+        스레드 하나가 큐에 쌓인 패킷을 순서대로 처리한다(스레드 생성 자체는 새 패킷이 와도
+        기존 워커가 살아 있으면 다시 하지 않는다)."""
+        key = (ip, port)
+        with self._reliable_lock:
+            q = self._reliable_queues.get(key)
+            if q is None:
+                q = self._reliable_queues[key] = queue.Queue()
+            q.put((pkt, on_done))
+            if key not in self._reliable_workers:
+                th = threading.Thread(target=self._reliable_worker, args=(key,), daemon=True)
+                self._reliable_workers[key] = th
+                th.start()
         return pkt["id"]
+
+    def _reliable_worker(self, key):
+        """한 상대(ip,port)에게 보낼 패킷을 큐에서 하나씩 꺼내 순서대로 보낸다. 30초 동안
+        새 패킷이 없으면 스스로 끝난다(더는 통신하지 않는 옛 상대의 스레드가 계속 남지 않게)."""
+        ip, port = key
+        q = self._reliable_queues.get(key)
+        while True:
+            try:
+                pkt, on_done = q.get(timeout=30)
+            except queue.Empty:
+                # 큐가 빈 채로 30초가 지났다고 바로 종료하면, 마침 이 순간 다른 스레드가
+                # _send_reliable에서 "워커가 이미 있으니 새로 안 만들어도 된다"고 판단해
+                # 이 큐에 패킷을 넣는 것과 겹칠 수 있다 — 같은 락으로 다시 한 번 확인해서
+                # 그런 패킷을 잃어버리지 않게 한다.
+                with self._reliable_lock:
+                    if not q.empty():
+                        continue
+                    self._reliable_workers.pop(key, None)
+                    self._reliable_queues.pop(key, None)
+                    return
+            try:
+                ok = self._send_reliable_wait(pkt, ip, port)
+            except Exception as _e:
+                applog.swallowed(_e)
+                ok = False
+            if on_done:
+                try:
+                    on_done(ok)
+                except Exception as _e:
+                    applog.swallowed(_e)
 
     def send_message(self, ip, port, text, reply=None, burn_sec=0, sticker_id=None):
         if sticker_id:

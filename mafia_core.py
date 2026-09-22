@@ -144,13 +144,17 @@ class GameCore:
             return "revote", {"tally": tally, "tied": top, "top": None}
 
     def execute_defense(self, name=None):
-        """최후 변론 후 찬반 투표. self.defense_yes/{name: bool} 은 UI가 사전 기입.
+        """최후 변론 후 찬반 투표. self.defense_yes/{name: True/False/None} 은 UI가 사전 기입
+        (None은 기권 — v1.88부터 찬반 어느 쪽으로도 세지 않는다. 예전에는 시한을 넘긴
+        미투표자를 전부 명시적 반대(False)로 채워 넣었는데, 그러면 표 하나가 패킷 유실
+        때문에 도착하지 않은 것과 '진짜로 반대를 눌렀다'가 결과에서 똑같이 취급돼, 인원이
+        적은 판에서는 패킷 한 통이 처형/부결을 뒤집을 수 있었다).
         피고인 본인 투표권 없음. 찬성 > 반대 시 처형."""
         with self.lock:
             target = getattr(self, "defendant", None) or name
             defense_votes = getattr(self, "defense_yes", {})
-            yes = sum(1 for voter, v in defense_votes.items() if v and voter != target)
-            no = sum(1 for voter, v in defense_votes.items() if not v and voter != target)
+            yes = sum(1 for voter, v in defense_votes.items() if v is True and voter != target)
+            no = sum(1 for voter, v in defense_votes.items() if v is False and voter != target)
             executed = yes > no
             result = "executed" if executed else "acquitted"
             if executed and target and self.players.get(target, {}).get("alive"):
