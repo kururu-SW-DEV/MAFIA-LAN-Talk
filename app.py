@@ -808,17 +808,31 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
             self._quit()
 
     def _show_tray_menu(self):
+        # v1.87 — TrackPopupMenu는 사용자가 메뉴를 닫을 때까지 안 돌아오는 모달 호출이다.
+        # 여기서 바로 부르면 그동안 _pump_body의 나머지(수신 이벤트 큐 처리, 게임 타이머)가
+        # 통째로 멈춘다 — 우클릭한 순간 마침 투표·밤 이벤트가 도착했다면 메뉴를 여는 것만으로
+        # 그 이벤트 처리가 늦어진다. Win32 호출 자체는 Tk를 건드리지 않으니 별도 스레드에서
+        # 열고, 고른 항목의 실행(Tk를 건드림)만 root.after로 메인 스레드에 되돌린다.
         try:
             hwnd = int(self.root.wm_frame(), 16)
         except Exception:
             hwnd = int(self.root.winfo_id())
-        try:
-            cmd = show_native_menu(hwnd, self._tray_menu_entries())
-        except Exception as _e:
-            applog.swallowed(_e)
-            return
-        if cmd:
-            self._tray_menu_dispatch(cmd)
+        entries = self._tray_menu_entries()
+
+        def worker():
+            try:
+                cmd = show_native_menu(hwnd, entries)
+            except Exception as _e:
+                applog.swallowed(_e)
+                return
+            # Tkinter는 스레드 안전하지 않다 — root.after()조차 백그라운드 스레드에서 부르면
+            # "main thread is not in main loop"로 실패한다(다른 훅 콜백들과 같은 이유로
+            # 여기서도 Tk API를 직접 건드리지 않는다). 결과는 평범한 속성에 남기고
+            # 실제 실행은 이미 메인 스레드에서 도는 _pump_body의 다음 틱(최대 80ms)에 맡긴다.
+            if cmd:
+                self._tray_menu_result = cmd
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _toggle_always_on_top(self):
         if not self.engine:
@@ -2620,6 +2634,10 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
         if getattr(self, "_tray_menu_pending", False):
             self._tray_menu_pending = False
             self._show_tray_menu()
+        result = getattr(self, "_tray_menu_result", None)
+        if result:
+            self._tray_menu_result = None
+            self._tray_menu_dispatch(result)
         while True:
             try:
                 ev = self.q.get_nowait()

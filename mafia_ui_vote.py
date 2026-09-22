@@ -285,6 +285,14 @@ class MafiaVoteMixin:
             return
         if getattr(self, "core", None) and ag.name in self.core.votes:   # 이미 표 낸 AI 스킵
             return
+        # v1.87 — 아래 _vote_fallback(11초 뒤 무작위 대타)이 그 사이에 이 AI가 다음 표결판
+        # (재투표·다음 날)에서 다시 호출됐는데도 안 죽고 있다가, 새 판의 core.votes가 아직
+        # 비어 있는 틈에 엉뚱하게 늦은 표를 꽂아넣지 않도록, 이 AI 이름별로 '몇 번째 호출인지'
+        # 세대를 매겨 자신의 세대가 아니면(더 최근 호출이 있었으면) 조용히 물러난다.
+        tokens = getattr(self, "_ai_vote_fallback_tokens", None)
+        if tokens is None:
+            tokens = self._ai_vote_fallback_tokens = {}
+        my_token = tokens[ag.name] = tokens.get(ag.name, 0) + 1
 
         def _bg_vote_worker():
             target = None
@@ -347,56 +355,7 @@ class MafiaVoteMixin:
                 if self._ai_vote_user_should_wait():
                     self.root.after(400, _apply)
                     return
-                # 반영 (core) — v1.40: 대상은 비공개, 완료 여부만 알림(익명 개표)
-                if target and ag.name in self.core.players:
-                    # (바깥 함수의 target을 여기서 재대입하면 파이썬이 지역변수로 취급해
-                    #  UnboundLocalError가 난다 — 새 이름으로 받는다)
-                    # 경찰 AI는 조사로 확인한 마피아가 살아 있으면 대부분 그 사람에게 투표한다(몰표 분산도 적용 안 함).
-                    known = ag.known_mafia_alive() if hasattr(ag, "known_mafia_alive") else []
-                    claimants = ag.police_claimants() if hasattr(ag, "police_claimants") else []
-                    dclaims = ag.doctor_claimants() if hasattr(ag, "doctor_claimants") else []
-                    if known and random_mod.random() < 0.9:
-                        final_target = random_mod.choice(known)
-                    elif claimants and random_mod.random() < 0.75:
-                        final_target = random_mod.choice(claimants)   # 마피아 AI: 경찰을 자처한 사람에게 표를 모은다
-                    elif dclaims and not claimants and random_mod.random() < 0.5:
-                        final_target = random_mod.choice(dclaims)     # 경찰 자처자가 없으면 의사 자처자에게
-                    else:
-                        final_target = self._pile_on_redirect(ag.name, target)
-                    if getattr(ag, "role", None) == "doctor" and hasattr(ag, "public_police_claims"):
-                        # 의사 AI는 경찰을 자처한 사람(진짜일 수 있음)에게는 투표하지 않는다
-                        if final_target in ag.public_police_claims() and random_mod.random() < 0.8:
-                            others = [n for n in self.core.alive_players() if n not in (ag.name, final_target)]
-                            if others:
-                                final_target = random_mod.choice(others)
-                    self.core.cast_vote(ag.name, final_target)
-                    _pd, _pt = self._vote_progress_counts()
-                    self.add_mafia_system(f"🗳 {ag.name}(AI)님 투표 완료 (익명 개표) · 진행률 {_pd}/{_pt}")
-                    self._broadcast_vote_done(ag.name, final_target)   # 원격 참가자 화면에도 진행 표시
-                    self._refresh_vote_progress_label()
-                    try:
-                        self._update_vote_btn_state()
-                    except Exception as _swallow_e:
-                        applog.swallowed(_swallow_e)
-                    # 전원 완료 체크 — v1.15: 즉시 조기개표
-                    if self.core.all_voted():
-                        self._schedule_tally(300)
-                    else:
-                        # v1.21 — AI끼리 다 냈고 유저 표만 남은 경우
-                        me_name = getattr(self.engine, "name", None)
-                        pending = [n for n in self.core.alive_players()
-                                   if n not in self.core.votes and n not in self.core.abstains
-                                   and n != getattr(self.core, "defendant", None)]
-                        if me_name in pending and not getattr(self, "_user_pending_notified", False):
-                            self._user_pending_notified = True
-                            self.add_mafia_system("🗳 AI 투표 완료 — 당신의 표만 기다립니다 (8초 후 자동 개표)")
-                            self._vote_remaining = min(getattr(self, "_vote_remaining", 15), 8)
-                            if getattr(self, "_force_tally_timer", None):
-                                try:
-                                    self.root.after_cancel(self._force_tally_timer)
-                                except Exception as _swallow_e:
-                                    applog.swallowed(_swallow_e)
-                            self._force_tally_timer = self.root.after(8_000, self._silent_tally_if_pending)
+                self._ai_cast_vote_now(ag, target)
 
             try:
                 self.root.after(0, _apply)
@@ -404,6 +363,78 @@ class MafiaVoteMixin:
                 applog.swallowed(_swallow_e)
 
         threading.Thread(target=_bg_vote_worker, daemon=True).start()
+
+        # v1.87 — LLM이 개표 시한(VOTE_WINDOW)보다 느리면 이 AI의 표는 위 _apply에서
+        # phase가 이미 바뀌어 조용히 버려진다(밤 행동엔 있던 무작위 대체가 표결엔 없었다).
+        # 시한 안에 아직 표를 못 냈으면 그때 무작위로 대신 찍는다 — 이미 낸 표가 있으면
+        # _ai_cast_vote_now 안의 'ag.name in self.core.votes' 검사로 아무 일도 없다.
+        def _vote_fallback():
+            if not self.mafia_active or not getattr(self, "core", None):
+                return
+            if self.core.phase not in (Phase.DAY, Phase.VOTE):
+                return
+            if getattr(self, "_ai_vote_fallback_tokens", {}).get(ag.name) != my_token:
+                return   # 그새 이 AI가 다음 표결판에서 다시 불렸다 — 이 대타는 낡았다
+            if ag.name in self.core.votes:
+                return
+            alive = [n for n in self.core.alive_players() if n != ag.name]
+            if alive:
+                self._ai_cast_vote_now(ag, random_mod.choice(alive))
+        self.root.after(AI_VOTE_LLM_FALLBACK_MS, _vote_fallback)
+
+    def _ai_cast_vote_now(self, ag, target):
+        """AI ag의 표를 core에 반영하고 진행 상황을 알린다(파일 상단 _ai_vote_in_popup에서
+        정상 경로·시한 대체 경로 양쪽이 공유). 이미 투표했으면 아무 것도 하지 않는다."""
+        if ag.name in self.core.votes:
+            return
+        # 반영 (core) — v1.40: 대상은 비공개, 완료 여부만 알림(익명 개표)
+        if target and ag.name in self.core.players:
+            # 경찰 AI는 조사로 확인한 마피아가 살아 있으면 대부분 그 사람에게 투표한다(몰표 분산도 적용 안 함).
+            known = ag.known_mafia_alive() if hasattr(ag, "known_mafia_alive") else []
+            claimants = ag.police_claimants() if hasattr(ag, "police_claimants") else []
+            dclaims = ag.doctor_claimants() if hasattr(ag, "doctor_claimants") else []
+            if known and random_mod.random() < 0.9:
+                final_target = random_mod.choice(known)
+            elif claimants and random_mod.random() < 0.75:
+                final_target = random_mod.choice(claimants)   # 마피아 AI: 경찰을 자처한 사람에게 표를 모은다
+            elif dclaims and not claimants and random_mod.random() < 0.5:
+                final_target = random_mod.choice(dclaims)     # 경찰 자처자가 없으면 의사 자처자에게
+            else:
+                final_target = self._pile_on_redirect(ag.name, target)
+            if getattr(ag, "role", None) == "doctor" and hasattr(ag, "public_police_claims"):
+                # 의사 AI는 경찰을 자처한 사람(진짜일 수 있음)에게는 투표하지 않는다
+                if final_target in ag.public_police_claims() and random_mod.random() < 0.8:
+                    others = [n for n in self.core.alive_players() if n not in (ag.name, final_target)]
+                    if others:
+                        final_target = random_mod.choice(others)
+            self.core.cast_vote(ag.name, final_target)
+            _pd, _pt = self._vote_progress_counts()
+            self.add_mafia_system(f"🗳 {ag.name}(AI)님 투표 완료 (익명 개표) · 진행률 {_pd}/{_pt}")
+            self._broadcast_vote_done(ag.name, final_target)   # 원격 참가자 화면에도 진행 표시
+            self._refresh_vote_progress_label()
+            try:
+                self._update_vote_btn_state()
+            except Exception as _swallow_e:
+                applog.swallowed(_swallow_e)
+            # 전원 완료 체크 — v1.15: 즉시 조기개표
+            if self.core.all_voted():
+                self._schedule_tally(300)
+            else:
+                # v1.21 — AI끼리 다 냈고 유저 표만 남은 경우
+                me_name = getattr(self.engine, "name", None)
+                pending = [n for n in self.core.alive_players()
+                           if n not in self.core.votes and n not in self.core.abstains
+                           and n != getattr(self.core, "defendant", None)]
+                if me_name in pending and not getattr(self, "_user_pending_notified", False):
+                    self._user_pending_notified = True
+                    self.add_mafia_system("🗳 AI 투표 완료 — 당신의 표만 기다립니다 (8초 후 자동 개표)")
+                    self._vote_remaining = min(getattr(self, "_vote_remaining", 15), 8)
+                    if getattr(self, "_force_tally_timer", None):
+                        try:
+                            self.root.after_cancel(self._force_tally_timer)
+                        except Exception as _swallow_e:
+                            applog.swallowed(_swallow_e)
+                    self._force_tally_timer = self.root.after(8_000, self._silent_tally_if_pending)
 
     def _vote_popup_tick(self, initial=False):
         if not getattr(self, "_vote_lbl", None):

@@ -8,6 +8,15 @@ from mafia_ui_common import *  # noqa: F401,F403
 
 
 class MafiaViewMixin:
+    _MAFIA_HISTORY_CAP = 500   # v1.87 — 최근 30개만 읽는 곳(mafia_ui_vote.py) 말고는 전체를
+                                # 다시 쓸 일이 없다. 무제한으로 쌓아 두면 밤·낮이 길어질수록
+                                # 리사이즈/재렌더링(전체 다시 그리기) 비용이 계속 커진다.
+
+    def _mafia_history_append(self, rec):
+        self.mafia_history.append(rec)
+        if len(self.mafia_history) > self._MAFIA_HISTORY_CAP:
+            del self.mafia_history[:-self._MAFIA_HISTORY_CAP]
+
     """게임방 화면·연출: 아바타 색, 오버레이/팝업, 시네마틱, 말풍선 기록·렌더"""
 
     def _avacolor(self, name):
@@ -613,7 +622,11 @@ class MafiaViewMixin:
         self._chat_images = []
         self._record_y_positions = {}
         self._record_y_end = {}
-        self._last_rendered_width = None   # 폭 변경 감지 캐시 무효화
+        # v1.87 — 여기서 _last_rendered_width를 지우면 안 된다: 이 값은 chat_renderer의
+        # _resize_apply가 "폭이 실제로 바뀌었을 때만 다시 그린다"를 판단하는 캐시인데,
+        # _resize_apply가 새 폭을 기록한 바로 다음 줄에서 _reload_chat → 이 함수를 부르며
+        # 그 값을 다시 None으로 지워버리면, 폭이 그대로인 다음 <Configure>(세로 크기 조절,
+        # 사이드바 접기 등)마다 캐시가 매번 미스 나서 mafia_history 전체를 다시 그린다.
         self._active_chat_key = self.mafia_room_key()
         self._active_chat_records = []
         if not self.mafia_history:
@@ -828,7 +841,7 @@ class MafiaViewMixin:
     def add_mafia_bubble(self, text, label, mine=False):
         rec = {"kind": "text", "mine": mine, "label": label, "ts": time.time(),
                "text": text, "is_system": False}
-        self.mafia_history.append(rec)
+        self._mafia_history_append(rec)
         # v1.12 — 유저/AI 발화 시점 갱신 (침묵 감지가 이 기준으로 동작)
         try:
             self._last_any_talk_ts = time.time()
@@ -841,7 +854,7 @@ class MafiaViewMixin:
     def add_mafia_system(self, text):
         # 랜톡 chat_renderer._draw_record와 호환: is_system=True면 시스템 구분선으로 그려짐
         rec = {"kind": "system", "is_system": True, "ts": time.time(), "text": text}
-        self.mafia_history.append(rec)
+        self._mafia_history_append(rec)
         if self._is_mafia_room_active():
             self._hide_empty()
             self._mafia_append_live(rec)
@@ -879,7 +892,7 @@ class MafiaViewMixin:
         """사회자 → 나 개인 쪽지(게임방 공개 아님). 자물쇠 표시로 그린다."""
         rec = {"kind": "host_dm", "mine": False, "label": "🖥 사회자", "ts": time.time(),
                "text": text, "is_system": False, "private": True}
-        self.mafia_history.append(rec)
+        self._mafia_history_append(rec)
         if self._is_mafia_room_active():
             self._hide_empty()
             self._mafia_append_live(rec)

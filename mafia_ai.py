@@ -407,9 +407,12 @@ class PlayerAgent:
             f"당신은 마피아 게임 참가자 '{self.name}'입니다. 성격은: {self.persona}.\n"
             f"게임 사회자는 '{host_name}'입니다. 다른 참가자: {players_desc}.\n"
             f"역할은 사회자가 나중에 개별적으로 알려줍니다. 대사는 {HERMES_REPLY_LANG}")
-        ok = self._turn(sys_prompt,
+        ok, _text = self._turn(sys_prompt,
                         f"[게임 개요] 위 지시를 알겠다면 '{self.name} 준비완료'라고만 짧게 답하세요.",
                         store=True)
+        # v1.87 — _turn()은 (성공 여부, 텍스트) 튜플을 돌려주는데 예전 코드는 그 튜플 자체를
+        # bool()로 감쌌다. 빈 튜플이 아닌 한 튜플은 항상 참이라 LLM이 응답을 못 받아도
+        # booted=True가 되어, 부트 실패 경고가 뜨지 않고 이후 이 AI는 조용히 무시된다.
         self.booted = bool(ok)
         return self.booted
 
@@ -508,10 +511,21 @@ class AIDirector:
                                     p["persona"], p["color"],
                                     freq=p.get("freq", 50), att=p.get("att", 50))
                         for i, p in enumerate(personas)]
-        ok_list = []
-        for pl in self.players:
-            ok = pl.start_bootstrap(host_name, players_desc)
-            ok_list.append((pl.name, ok))
+        # v1.87 — 예전에는 한 명씩 차례로 부팅해서(각각 최대 45초 대기) AI가 4명이면
+        # 최악의 경우 3분 가까이 걸렸고, 그동안에도 낮 타이머는 이미 돌고 있었다.
+        # 이 함수는 이미 백그라운드 스레드에서 불리므로(호출부 _host_then_bootstrap_bg)
+        # 병렬로 던져도 Tk 스레드와는 무관하다.
+        ok_list = [None] * len(self.players)
+
+        def _boot_one(i, pl):
+            ok_list[i] = (pl.name, pl.start_bootstrap(host_name, players_desc))
+
+        threads = [threading.Thread(target=_boot_one, args=(i, pl), daemon=True)
+                   for i, pl in enumerate(self.players)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
         self.flush_pending()
         return ok_list
 

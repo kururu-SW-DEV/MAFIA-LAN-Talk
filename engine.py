@@ -45,7 +45,14 @@ class Engine:
         # 이름 우선순위: 실행 인자로 준 이름 > 지난번 저장된 표시 이름 > 시스템 계정명.
         # 저장된 이름을 여기서 읽지 않으면 재시작할 때마다 set_name()으로 바꾼
         # 이름이 default_name()으로 되돌아가 버린다.
-        self.name = (name or self._read_settings().get("name") or default_name())
+        # v1.87 — set_name()은 저장 전에 sanitize_chat_text로 정제하지만, 저장된 이름을
+        # 여기서 그냥 불러올 때는 정제하지 않았다. 과거 버전이나 손으로 수정한 설정 파일에
+        # variation selector·ZWJ가 섞인 이름(이모지 닉네임 등)이 남아 있으면, 이후 모든
+        # peer가 받는(수신 시 정제되는) 이름과 내 self.name이 서로 달라져 hdm의
+        # target==me 비교, start 명단의 me in names 비교, 투표 송신자 검증이 전부 실패한다
+        # — 그 사람만 역할도 없고 화면도 안 뜨는, 원인을 알 수 없는 완전 무응답이 된다.
+        self.name = sanitize_chat_text(str(name or self._read_settings().get("name") or "")).strip()[:60] \
+            or default_name()
         self.max_file_size = self._clamp_file_size_mb(
             self._read_settings().get("max_file_size_mb")) * 1024 * 1024
         self.always_on_top = bool(self._read_settings().get("always_on_top", False))
@@ -1988,7 +1995,10 @@ class Engine:
             self._append_log(ip, int(port), "out", text, reply=reply, mid=mid, unread=True,
                              burn_sec=burn_sec, sticker_id=sticker_id)
         def _done(ok):
-            if not ok:
+            # 마피아 제어 패킷([MAFIA1])은 시각이 지나면 의미가 없다 — 몇 시간 뒤 다음 판이나
+            # 다른 판에서 프레즌스 패킷을 계기로 outbox가 재전송하면, 이미 지난 밤/낮/판결이
+            # 되살아나 클라이언트 상태를 되감는다. 오프라인 재전송은 일반 채팅에만 쓴다.
+            if not ok and not text.startswith("[MAFIA1]"):
                 self._enqueue_outbox(ip, port, pkt)
             self._emit({"ev": "sent", "id": mid, "ok": ok, "ip": ip, "port": port})
         self._send_reliable(pkt, ip, port, on_done=_done)

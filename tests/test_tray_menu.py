@@ -70,10 +70,16 @@ app._tray_menu_dispatch(0)
 check("메뉴를 취소(0)하면 아무 일도 없음", calls == ["quit"])
 
 # ---- 4) 훅이 세운 플래그를 메인 루프가 처리 ----
+# v1.87 — 메뉴를 여는 실제 Win32 호출은 모달이라 메인 스레드를 막지 않으려고 별도 스레드에서
+# 돌고, 선택 실행은 다음 _pump_body 틱에 넘어간다. 그래서 _pump_body() 한 번으로는 아직
+# 반영되지 않을 수 있다 — 짧게 폴링한다.
 picked = []
 appmod.show_native_menu = lambda hwnd, entries: (picked.append([e[1] for e in entries if e[0]]) or app._TRAY_ID_SOUND)
 app._tray_menu_pending = True
 app._pump_body()
+end = time.time() + 1.0
+while time.time() < end and not (picked and app.engine.notify_sound_enabled is False):
+    root.update(); app._pump_body(); time.sleep(0.02)
 check("우클릭 플래그를 메인 루프(_pump)가 처리해 메뉴를 띄우고 선택을 실행함",
       app._tray_menu_pending is False and picked and app.engine.notify_sound_enabled is False)
 app.engine.set_notify_sound_enabled(True)
@@ -98,9 +104,16 @@ clicked = []
 _orig_click = app._on_notify_click
 app._on_notify_click = lambda: clicked.append(1)
 user32_.PostMessageW(frame, WM_TRAYICON, 1, (1 << 16) | 0x0202)
-end = time.time() + 0.6
+# v1.87 — 이 훅(WH_GETMESSAGE)은 창을 옮기는 동안 잠깐 내려갔다가 500ms 뒤 되살아난다
+# (_dnd_on_configure/_dnd_rehook). 0.6초 창은 그 되살아나는 타이밍과 겹치면 가끔
+# 첫 메시지를 놓쳐 실패했다 — 안 잡히면 한 번 더 보내고 창을 넉넉히 늘린다.
+end = time.time() + 1.2
+resent = False
 while time.time() < end and not clicked:
     root.update(); app._pump_body(); time.sleep(0.02)
+    if not clicked and not resent and time.time() > end - 0.6:
+        user32_.PostMessageW(frame, WM_TRAYICON, 1, (1 << 16) | 0x0202)
+        resent = True
 check("좌클릭은 그대로 창 열기(_on_notify_click)로 동작하고 메뉴는 뜨지 않음", bool(clicked))
 app._on_notify_click = _orig_click
 

@@ -743,8 +743,10 @@ try:
     except Exception:
         pass
 
+    # v1.87 — 프레즌스 한 번 누락으로 바로 죽이지 않고 연속 3회(PEER_TIMEOUT 12s + 폴링
+    # 간격 4s×2)를 확인하도록 바뀌어 최악의 경우 20초 가까이 걸린다 — 여유를 둔다.
     check("⑥ A가 B의 접속 끊김을 감지해 사망 처리함",
-          pump(lambda: appA.core.players.get("이팀장B", {}).get("alive") is False, timeout=20))
+          pump(lambda: appA.core.players.get("이팀장B", {}).get("alive") is False, timeout=28))
     check("⑥ 사망 처리 사실이 시스템 메시지로 안내됨",
           any("이팀장B" in t and "사망 처리" in t for t in A_sys))
     leak = [t for t in A_sys if "이팀장B" in t and "끊긴 것 같습니다" in t

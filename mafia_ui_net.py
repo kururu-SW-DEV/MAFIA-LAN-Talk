@@ -473,10 +473,6 @@ class MafiaNetMixin:
         except Exception:
             return False
         t = ev.get("t")
-        if t in ("defense_start", "verdict", "night", "day", "end", "tally") and not self._mafia_is_host():
-            self._vote_window = False
-        if t in ("verdict", "night", "day", "end") and not self._mafia_is_host():
-            self._clear_client_defense()
         if not self._proto_authorized(t, ev, sender_name, peer):
             try:
                 import applog
@@ -484,6 +480,14 @@ class MafiaNetMixin:
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
             return False
+        # v1.87 — 이 클라이언트 쪽 상태(표시 안내·변론 잠금 해제)를 지우는 것은 진짜 방장의
+        # 이벤트로 검증된 뒤에만 한다. 예전에는 송신자 검증(_proto_authorized) 전에 지웠기
+        # 때문에, LAN에 떠 있는 아무 기기(옛 버전 인스턴스 등)가 같은 t 값을 보내는 것만으로도
+        # 실제 최후 변론 도중 발언 잠금이 풀리고 75초 안전 타이머가 취소될 수 있었다.
+        if t in ("defense_start", "verdict", "night", "day", "end", "tally") and not self._mafia_is_host():
+            self._vote_window = False
+        if t in ("verdict", "night", "day", "end") and not self._mafia_is_host():
+            self._clear_client_defense()
         if t != "recruit_start" and t in self._HOST_ONLY_EVENTS:
             self._mafia_last_host_ts = time.time()      # 방장이 살아 있다는 표시
         # 참가 신청하지 않은 사람에게는 게임 진행 화면(시작·밤 연출·투표 팝업)을 띄우지 않는다.
@@ -887,6 +891,9 @@ class MafiaNetMixin:
             known = getattr(self, "_mafia_disconnected", None)
             if known is None:
                 known = self._mafia_disconnected = set()
+            strikes = getattr(self, "_mafia_disconnect_strikes", None)
+            if strikes is None:
+                strikes = self._mafia_disconnect_strikes = {}
             for name, p in list(self.core.players.items()):
                 if p.get("is_ai") or name == me:
                     continue
@@ -898,6 +905,14 @@ class MafiaNetMixin:
                         online = True
                 was_disconnected = name in known
                 if not online and not was_disconnected:
+                    # v1.87 — 와이파이에서는 프레즌스(UDP 브로드캐스트)가 몇 번 연속으로
+                    # 누락되는 일이 흔하다. 첫 번째 누락에 바로 사망 처리하면 순간적인
+                    # 전파 문제로 살아 있는 사람을 게임에서 제외하게 되므로, 연속으로
+                    # 몇 번(약 12초) 더 확인한 뒤에만 접속 끊김으로 확정한다.
+                    n = strikes.get(name, 0) + 1
+                    strikes[name] = n
+                    if n < 3:
+                        continue
                     known.add(name)
                     self.add_mafia_system(
                         f"⚠ {name}님과의 연결이 끊긴 것 같습니다(응답 없음) — "
@@ -916,6 +931,9 @@ class MafiaNetMixin:
                             return
                 elif online and was_disconnected:
                     known.discard(name)
+                    strikes.pop(name, None)
+                elif online:
+                    strikes.pop(name, None)
                     if p.get("alive", True):
                         self.add_mafia_system(f"✅ {name}님이 다시 연결되었습니다.")
                     else:

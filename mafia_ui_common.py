@@ -25,7 +25,7 @@ import mafia_config
 from mafia_config import (ALL_PERSONAS, AI_PERSONAS, GAME_ROOM_NAME, MIN_PLAYERS,
                           MAX_PLAYERS,
                           DAY_CYCLE_SECONDS, NIGHT_SOLVE_SECONDS,
-                          VOTE_REVEAL_DELAY, VOTE_WINDOW,
+                          VOTE_REVEAL_DELAY, VOTE_WINDOW, AI_VOTE_LLM_FALLBACK_MS,
                           DEFENSE_VOTE_WINDOW, NIGHT_ACTION_WINDOW,
                           AI_REACT_MAX_REPLIES, AI_REACT_SKIP_PROB,
                           AI_PILE_ON_LIMIT_RATIO, AI_PILE_ON_REDIRECT_PROB)
@@ -130,6 +130,7 @@ __all__ = [
     "NIGHT_SOLVE_SECONDS",
     "VOTE_REVEAL_DELAY",
     "VOTE_WINDOW",
+    "AI_VOTE_LLM_FALLBACK_MS",
     "DEFENSE_VOTE_WINDOW",
     "NIGHT_ACTION_WINDOW",
     "AI_REACT_MAX_REPLIES",

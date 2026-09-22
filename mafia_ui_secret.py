@@ -418,6 +418,11 @@ class MafiaSecretMixin:
         self._ghost_kick_sig = None
         self._ghost_unread = False
         self._ai_color_cache = None          # 게임이 시작·종료되면 명단이 바뀌므로 AI 색 캐시도 비운다
+        # v1.87 — 동률 재투표 상태도 판마다 비운다. 재투표 도중 누가 접속이 끊겨 게임이
+        # 끝나버리면 _revote_tied가 지난 판의 동률 명단을 그대로 물고 있었는데, 이걸 지우는
+        # 곳이 어디에도 없어서 다음 판 첫 재투표 때 그 명단 밖 사람에게 온 표를 전부 버렸다.
+        self._revote_tied = []
+        self._revote_tally_scheduled = True
 
     def _ghost_roster_text(self):
         """유령방 상단 현황: 생존/사망 인원과 사망자(유령)의 직업."""
