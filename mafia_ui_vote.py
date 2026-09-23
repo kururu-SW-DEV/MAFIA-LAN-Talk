@@ -38,6 +38,8 @@ class MafiaVoteMixin:
             int(DAY_CYCLE_SECONDS * 1000), self._on_day_timeout)
         # v1.40 — 토론 중 조기 자동투표 제거: 실제 투표는 개표 팝업에서만 집계한다
         # (유저보다 AI가 먼저 투표를 확정해버리는 문제의 원인이었음)
+        if self._mafia_is_host():
+            self._mafia_broadcast("day_timer", sec=int(DAY_CYCLE_SECONDS))   # v1.93 — 클라이언트 남은 시간 동기화
         self._day_tick_loop()
 
     def _day_tick_loop(self):
@@ -644,6 +646,8 @@ class MafiaVoteMixin:
             return
         self._tally_in_progress = True
         self._cancel_tally_safety_timers()
+        if self._mafia_is_host():
+            self._mafia_broadcast("vote_close")     # v1.93 — 클라이언트 투표 팝업도 닫는다
         self._vote_window = False        # 개표가 시작되면 "투표 창 열림" 표시를 끈다(DAY로 남은 채 "개표 중"이 되살아나는 것 방지)
         self.core.phase = Phase.VOTE
         self.refresh_mafia_phase_label()

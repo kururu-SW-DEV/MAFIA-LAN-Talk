@@ -44,5 +44,19 @@ sent=[]; app._mafia_broadcast=lambda *a,**k: sent.append(a)
 app.mafia_host_mode=True; app.mafia_active=True
 app.add_mafia_system("공개 안내"); app.add_mafia_system("내 안내",local=True)
 check("local=True 안내는 방송하지 않음", len(sent)==1 and sent[0][0]=="sys")
+# 4) v1.93 — 원격 경찰 조사 결과 기록·낮 타이머 동기화·투표 창 닫힘
+app.mafia_host_mode=False; app.mafia_active=True; app._recruiter_host="방장"; app.core.phase=Phase.DAY
+app.core.join("경찰",False) if False else None
+app.core.players.setdefault("나",{"role":None,"alive":True,"is_ai":False})
+me=app.engine.name; app.core.players.setdefault(me,{"role":"police","alive":True,"is_ai":False})
+app._on_mafia_proto_msg(encode("hdm",target=me,text="🕵 [조사 결과 — 나에게만 보임] 철수님은 마피아입니다!"),"방장",None)
+check("원격 경찰: 조사 결과가 내 core.police_invest에 기록됨", app.core.police_invest.get("철수")=="mafia")
+app._on_mafia_proto_msg(encode("day_timer",sec=150),"방장",None)
+import time as _t
+check("day_timer로 낮 남은 시간이 맞춰짐", 140 < app._day_deadline-_t.time() <= 150)
+opened=[]
+app._vote_lbl=object(); app._cancel_vote_popup=lambda: opened.append(1)
+app._on_mafia_proto_msg(encode("vote_close"),"방장",None)
+check("vote_close를 받으면 투표 팝업을 닫음", opened==[1])
 root.destroy()
 print("V192 FIXES","PASSED" if ALL else "FAILED"); sys.exit(0 if ALL else 1)

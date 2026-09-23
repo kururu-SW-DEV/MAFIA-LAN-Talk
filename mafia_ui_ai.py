@@ -64,6 +64,7 @@ class MafiaAIChatMixin:
                 return
             m = re.match(r"^(?:구조|의사|save|heal)\s+([^\s]+)$", text.strip())
             if m and my_role == "doctor" and not self._mafia_is_host():
+                self._pending_heal = m.group(1).strip()   # v1.93 — 접수(💉)되면 밤이 끝날 때 last_protect로 기록
                 self._mafia_send_to_host("night_action", actor=me, role="doctor", target=m.group(1).strip())
                 self.add_mafia_host_dm("⏳ 밤 행동을 호스트에게 전달했습니다 — 처리 결과는 곧 알려드립니다.")
                 return

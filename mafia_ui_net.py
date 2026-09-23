@@ -309,7 +309,8 @@ class MafiaNetMixin:
         "hsay", "asay", "sys", "hdm", "start", "night", "day", "death", "end", "tally",
         "vote", "vote_open", "revote_open", "defense_vote_open", "defense_start", "verdict",
         "recruit_start", "recruit_update", "recruit_cancel", "ghost_say",
-        "force_end"})   # v1.89 — 방장의 게임 강제 종료
+        "force_end",    # v1.89 — 방장의 게임 강제 종료
+        "day_timer", "vote_close"})   # v1.93 — 낮 타이머 동기화·투표 창 닫힘 통보
 
     # 참가자가 자기 이름으로 보내는 이벤트 → 본문에 적힌 '누구'가 실제 송신자와 같아야 한다.
     _PEER_CLAIM_FIELD = {
@@ -602,7 +603,7 @@ class MafiaNetMixin:
                     return True
             elif t == "recruit_start":
                 self._in_game = True
-            elif (t in ("night", "day", "death", "tally", "vote", "vote_open", "revote_open",
+            elif (t in ("night", "day", "death", "tally", "vote", "vote_open", "revote_open", "day_timer", "vote_close",
                         "defense_vote_open", "defense_start", "verdict", "end",
                         # 사회자·AI·참가자의 게임 중 대화도 참가하지 않은 사람에게는 보이면 안 된다.
                         # v1.89 — "lobby_chat"은 여기 넣으면 안 됐다: 참가 못 한 사람들끼리
@@ -681,6 +682,14 @@ class MafiaNetMixin:
                 msg_txt = ev.get("text")
                 msg_txt = msg_txt if isinstance(msg_txt, str) else ""
                 self.add_mafia_host_dm(msg_txt)
+                # v1.93 — 조사 결과 쪽지를 받으면 내 core.police_invest에도 기록한다. 이 값은 호스트만
+                # 채웠기 때문에 원격 경찰의 밤 패널에는 지난 결과·"이미 조사"가 전혀 안 보여, 이미
+                # 조사한 사람을 또 고르며 밤을 낭비할 수 있었다(v1.85가 의사에게 한 것과 같은 조치).
+                if not self._mafia_is_host() and "조사 결과" in msg_txt:
+                    import re as _re
+                    _m = _re.search(r"\]\s*(\S+?)님은 (마피아입니다|마피아가 아닙니다)", msg_txt)
+                    if _m:
+                        self.core.police_invest[_m.group(1)] = "mafia" if _m.group(2) == "마피아입니다" else "citizen"
                 if ev.get("tok") and not self._mafia_is_host():
                     self._my_tok = ev.get("tok")
                 if not self._mafia_is_host():
@@ -825,6 +834,26 @@ class MafiaNetMixin:
                 self._client_start_day_countdown()
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
+        elif t == "day_timer":
+            # v1.93 — 방장이 낮 타이머를 실제로 시작한 시점에 남은 시간을 맞춘다. 1일차는 방장이
+            # 개회 LLM(최대 45초)을 기다린 뒤에 타이머를 돌리는데, 클라이언트는 start를 받자마자
+            # 세어서 "0:00"에서 한참 기다리다 늦게 투표가 열렸다.
+            if not self._mafia_is_host() and self.mafia_active and self.core.phase == Phase.DAY                     and not getattr(self, "_vote_window", False):
+                sec = ev.get("sec")
+                if isinstance(sec, (int, float)) and 10 <= sec <= 900:
+                    t0 = getattr(self, "_day_tick", None)
+                    if t0:
+                        try:
+                            self.root.after_cancel(t0)
+                        except Exception as _swallow_e:
+                            applog.swallowed(_swallow_e)
+                        self._day_tick = None
+                    self._day_deadline = time.time() + float(sec)
+                    self._day_tick_loop()
+        elif t == "vote_close":
+            # v1.93 — 호스트가 이미 개표를 시작했는데 클라이언트 투표 팝업이 계속 눌리던 문제
+            if not self._mafia_is_host() and getattr(self, "_vote_lbl", None):
+                self._cancel_vote_popup()
         elif t == "vote_open":
             # v1.61 — 호스트가 낮 투표를 개시하면 원격 화면에도 투표 팝업을 연다.
             if not self._mafia_is_host() and self.mafia_active:
