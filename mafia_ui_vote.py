@@ -871,8 +871,11 @@ class MafiaVoteMixin:
             return
         import queue as _q
         me_u = getattr(self.engine, "name", None)
-        if me_u and name == me_u:
-            self.add_mafia_system("(안내) 변론 기간 중입니다 — 채팅으로 직접 변론하세요 (60초)")
+        # v1.91 — 사람 피고인은 호스트 본인뿐 아니라 원격 참가자도 해당한다. 예전에는 호스트
+        # 본인만 확인해서, 원격 사람이 피고인이면 그 사람이 말하지 않았는데 6초 뒤 정해진
+        # 변론문이 그 사람 이름으로 올라갔다(사칭). 사람 피고인이면 어느 쪽이든 안내만 한다.
+        if (me_u and name == me_u) or not (self.core.players.get(name) or {}).get("is_ai"):
+            self.add_mafia_system(f"(안내) 변론 기간 중입니다 — {name}님이 채팅으로 직접 변론합니다 (60초)")
             return
         q = getattr(self, "_defense_ui_q", None)
         if q is not None and getattr(self.core, "defendant", None) == name:
@@ -887,7 +890,8 @@ class MafiaVoteMixin:
                 kind, name, t = self._defense_ui_q.get_nowait()
                 if kind == "defense":
                     # v1.31 — 유저 본인 이름의 'AI 생성' 변론문 스킵(사칭 차단)
-                    if name and name == getattr(self.engine, "name", None):
+                    if name and (name == getattr(self.engine, "name", None)
+                                 or not (self.core.players.get(name) or {}).get("is_ai")):
                         continue
                     # v1.23 — 변론 발화는 채팅 반영만 함(찬반 개시는 60초 후 별도)
                     self._defense_has_spoken = True
