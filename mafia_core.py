@@ -250,7 +250,7 @@ class GameCore:
     def mafia_night_vote(self, mafia_name, target):
         """밤 마피아 다수 지목 — 개별 수집(합의 실패 판정용). 자기 자신 금지."""
         with self.lock:
-            if self.players.get(mafia_name, {}).get("role") != "mafia":
+            if self.players.get(mafia_name, {}).get("role") != "mafia" or not self.players[mafia_name].get("alive"):
                 return False
             if not target or target == mafia_name or not self.players.get(target, {}).get("alive"):
                 return False
@@ -266,7 +266,10 @@ class GameCore:
     def night_kill_agree(self):
         """다수 마피아 합의 실패/동률 판정. 합의 대상 또는 None."""
         with self.lock:
-            t = list(self.night_targets.values())
+            # v1.95 — 밤 도중 접속이 끊겨 죽은 마피아의 지목이 남아 있으면 살아 있는 마피아가 뜻이
+            # 같아도 "갈림"으로 보여 그날 밤 살해가 통째로 무효가 됐다. 살아 있는 마피아 것만 센다.
+            t = [tg for m, tg in self.night_targets.items()
+                 if (self.players.get(m) or {}).get("alive")]
             if not t:
                 return None
             if len(set(t)) == 1:

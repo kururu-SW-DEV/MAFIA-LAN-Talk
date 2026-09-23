@@ -132,7 +132,8 @@ class MafiaVoteMixin:
         self._cancel_tally_safety_timers()
         # v1.61 — 원격 참가자 화면에도 투표 팝업이 뜨도록 개시를 알린다
         if self._mafia_is_host():
-            self._mafia_broadcast("vote_open")
+            self._vote_rid = (getattr(self, "_vote_rid", 0) or 0) + 1     # v1.95 — 투표판 번호
+            self._mafia_broadcast("vote_open", rid=self._vote_rid)
         # 개표 전 12초 카운트다운 팝업 — 각자 팝업에서 대상 클릭 투표
         self._show_vote_popup()
 
@@ -685,7 +686,8 @@ class MafiaVoteMixin:
         # v1.61 — 원격 참가자 화면에도 재투표 팝업이 뜨도록 알린다(이전엔 동률이
         # 나면 원격은 팝업 없이 호스트의 30초 강제 개표까지 기다렸다).
         if self._mafia_is_host():
-            self._mafia_broadcast("revote_open", tied=list(tied))
+            self._vote_rid = (getattr(self, "_vote_rid", 0) or 0) + 1
+            self._mafia_broadcast("revote_open", tied=list(tied), rid=self._vote_rid)
 
         # v1.19 — 유저 사망 시 AI끼리 즉시 재투표(팝업 인터랙션 불필요):
         # 유령방 자동 오픈이 재투표 팝업을 가리는 것 + 유저 무응답 30초 대기 둘 다 제거
@@ -799,6 +801,8 @@ class MafiaVoteMixin:
                 except Exception as _swallow_e:
                     applog.swallowed(_swallow_e)
                 self._revote_deadline = None
+            if self._mafia_is_host():
+                self._mafia_broadcast("vote_close")   # v1.95 — 재투표 창도 닫는다(1차 개표만 보내고 있었다)
             self.root.after(700, self._tally_full)   # 2차 개표
 
     def _cast_revote(self, name):
@@ -1022,7 +1026,7 @@ class MafiaVoteMixin:
         me = getattr(self.engine, "name", None)
         # v1.19 — 사망자는 찬반 투표권 없음: AI끼리 진행 (팝업 열지 않음)
         if me and not (self.core.players.get(me) or {}).get("alive", True):
-            self.add_mafia_system("👻 사망자 찬반 투표권 없음 — AI끼리 진행합니다")
+            self.add_mafia_system("👻 사망자 찬반 투표권 없음 — AI끼리 진행합니다", local=True)
             # AI 표는 이미 예약돼 있고, 유저 표 없이도 30초 안전망이 개표 보장
             return
         body = self._mafia_overlay_open("⚖ 최후 변론 — 처형 찬/반", w=320, h=None)
@@ -1071,7 +1075,7 @@ class MafiaVoteMixin:
                         self._mafia_overlay_close()
                     except Exception as _swallow_e:
                         applog.swallowed(_swallow_e)
-                    self.add_mafia_system("⚖ 피고인 화면 닫힘 — 찬반 투표는 AI들이 진행합니다")
+                    self.add_mafia_system("⚖ 피고인 화면 닫힘 — 찬반 투표는 AI들이 진행합니다", local=True)
                     return
                 try:
                     lbl10.config(text=f"⏳ 10초 후 자동으로 닫힙니다 ({state['n']})")

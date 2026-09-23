@@ -205,7 +205,7 @@ class MafiaNightMixin:
         with self.core.lock:
             if results.get("kill") and not self.core.night_target:
                 self.core.set_night_target(results["kill"])
-                self.add_mafia_system("(무인 밤 행동 적용) 마피아의 선택이 접수되었습니다.")
+                self.add_mafia_system("(무인 밤 행동 적용) 마피아의 선택이 접수되었습니다.""(무인 밤 행동 적용) 마피아의 선택이 접수되었습니다.", local=True)
             # 다수 마피아 합의: 각 마피아의 개별 지목 1:1 반영
             multi = results.get("multi", [])
             multi_pairs = results.get("multi_pairs", [])
@@ -237,9 +237,9 @@ class MafiaNightMixin:
             save_t = results.get("save")
             if save_t and not self.core.night_saved:
                 if self.core.doctor_protect(save_t):
-                    self.add_mafia_system("(무인 밤 행동 적용) 의사의 선택이 접수되었습니다.")
+                    self.add_mafia_system("(무인 밤 행동 적용) 의사의 선택이 접수되었습니다.""(무인 밤 행동 적용) 의사의 선택이 접수되었습니다.", local=True)
                 else:
-                    self.add_mafia_system("(무인 밤 행동 적용) 의사의 연속 보호 시도가 규칙에 따라 제한되었습니다.")
+                    self.add_mafia_system("(무인 밤 행동 적용) 의사의 연속 보호 시도가 규칙에 따라 제한되었습니다.""(무인 밤 행동 적용) 의사의 연속 보호 시도가 규칙에 따라 제한되었습니다.", local=True)
 
     def _enter_night_sequence(self):
         if not self.mafia_active:

@@ -686,6 +686,14 @@ class DialogsMixin:
         return False
 
     def _apply_name_dialog(self):
+        # v1.95 — 모집 중이거나 게임 중에 이름을 바꾸면 명단의 내 이름과 어긋나 방장은 20초 뒤
+        # 스스로를 접속 끊김으로 사망 처리하고, 참가자는 역할 통보·투표가 전부 안 맞는다.
+        if getattr(self, "mafia_active", False) or getattr(self, "_recruiting", False):
+            try:
+                self.status.set("마피아 모집·게임 중에는 이름을 바꿀 수 없습니다")
+            except Exception:
+                pass
+            return
         nm = self._embed_prompt_text("이름 변경", "표시 이름을 입력하세요",
                                      initial=(self.engine.name if self.engine else self.me_lbl["text"]))
         if nm and nm.strip() and self.engine:

@@ -141,8 +141,14 @@ class MafiaSecretMixin:
             return
         ent.delete(0, "end")
         self._mafia_room_append("나", text)
-        for mate in self._mafia_team_names(me):
-            self._mafia_send_private(mate, "mafia_say", name=me, text=text)
+        mates = self._mafia_team_names(me)
+        if mates and not self._mafia_is_host():
+            # v1.95 — 클라이언트끼리 직접 못 닿는 환경(인터넷 참가자 등)에서도 사람 마피아 동료 채팅이
+            # 가도록 방장에게만 보내고 방장이 나머지 마피아에게 중계한다.
+            self._mafia_send_private(getattr(self, "_recruiter_host", None), "mafia_say", name=me, text=text)
+        else:
+            for mate in mates:
+                self._mafia_send_private(mate, "mafia_say", name=me, text=text)
         # AI 마피아 동료도 이 말을 듣고 답한다(AI는 호스트에서만 돌아간다)
         if self._mafia_ai_mates(me):
             if self._mafia_is_host():
@@ -446,7 +452,7 @@ class MafiaSecretMixin:
         생존자에게는 전혀 노출되지 않는 별도 overlay. 대화는 게임이 끝날 때까지 누적되어, 닫았다가 다시 열어도 이어진다."""
         me = getattr(self.engine, "name", None)
         if not me or self.core.players.get(me, {}).get("alive", False):
-            self.add_mafia_system("👻 유령 채팅방은 사망자 전용입니다 — 지금은 생존 중이라 들어올 수 없습니다")
+            self.add_mafia_system("👻 유령 채팅방은 사망자 전용입니다 — 지금은 생존 중이라 들어올 수 없습니다", local=True)
             return
         if getattr(self, "_ghost_log", None) is None:
             self._reset_ghost_state()
@@ -457,7 +463,7 @@ class MafiaSecretMixin:
         self._ghost_ui_open = True
         ghosts = self.core.ghost_room_members()
         if not ghosts:
-            self.add_mafia_system("👻 사망자가 아직 없습니다.")
+            self.add_mafia_system("👻 사망자가 아직 없습니다.", local=True)
             return
         body = self._mafia_overlay_open("👻 유령 채팅방 — 사망자들만의 공간", w=460, h=None)
         # v1.17 — overlay_open 내부의 prev-close가 flag를 reset하므로 '뒤'에서 복원

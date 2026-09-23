@@ -47,7 +47,10 @@ def _prune_replay_cache_locked(now):
     if now - _last_prune_time < _PRUNE_INTERVAL:
         return
     _last_prune_time = now
-    cutoff = now - MAX_CLOCK_SKEW
+    # v1.95 — 패킷은 타임스탬프가 (수신 시각 ± 120초) 안이면 받아들인다. 시계가 120초 앞선 상대의
+    # 패킷은 수신 후 240초까지 유효한데 태그를 120초 만에 지우면, 그 사이 재전송된 같은 패킷이
+    # 재전송 방어를 통과했다 — 최대 유효 기간(2×오차) + 청소 주기만큼 태그를 보관한다.
+    cutoff = now - (2 * MAX_CLOCK_SKEW + _PRUNE_INTERVAL)
     expired = [t for t, rec_time in _replay_cache.items()
                if rec_time < cutoff or rec_time > now + MAX_CLOCK_SKEW]
     for t in expired:

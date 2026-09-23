@@ -58,5 +58,19 @@ opened=[]
 app._vote_lbl=object(); app._cancel_vote_popup=lambda: opened.append(1)
 app._on_mafia_proto_msg(encode("vote_close"),"방장",None)
 check("vote_close를 받으면 투표 팝업을 닫음", opened==[1])
+# 5) v1.95 — 끊긴 사망 마피아 지목 제외, 밤 안내 로컬, 토큰으로 주소 재묶음, 사이드바 없이도 say_relay
+c2=GameCore("t2")
+for n,r in (("가","mafia"),("나","mafia"),("다","citizen"),("라","citizen"),("마","citizen")):
+    c2.join(n,False); c2.players[n]["role"]=r
+c2.phase=Phase.NIGHT; c2.day_no=1
+c2.mafia_night_vote("가","다"); c2.mafia_night_vote("나","다")
+c2.players["나"]["alive"]=False
+c2.night_targets["나"]="라"
+check("죽은 마피아의 다른 지목이 남아도 살아 있는 마피아 합의는 유효", c2.night_kill_agree()=="다")
+sent2=[]; app._mafia_send_private=lambda n,t,**k: sent2.append((n,t))
+app.mafia_host_mode=True; app.mafia_active=True; app.core.phase=Phase.DAY
+for n in ("원격1","원격2"): app.core.players[n]={"role":"citizen","alive":True,"is_ai":False}
+app._mafia_relay_say("원격1","안녕")
+check("호스트는 발언을 보낸 사람을 뺀 다른 사람 참가자에게 중계", "원격2" in [x[0] for x in sent2] and "원격1" not in [x[0] for x in sent2])
 root.destroy()
 print("V192 FIXES","PASSED" if ALL else "FAILED"); sys.exit(0 if ALL else 1)

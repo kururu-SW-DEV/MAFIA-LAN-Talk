@@ -434,7 +434,7 @@ class _NightStub(MafiaUIMixin):
         self.ai = SimpleNamespace(players=list(self.pls.values()))
         self.sys = []
 
-    def add_mafia_system(self, t):
+    def add_mafia_system(self, t, local=False):
         self.sys.append(t)
 
     def _night_ai_pick_async(self, pl, prompt, cands, cb):        # 스레드 없이 동기 실행
@@ -685,7 +685,7 @@ class _IdStub(_GateStub):
     def add_mafia_host_dm(self, text):
         self.notes.append(text)
 
-    def add_mafia_system(self, text):
+    def add_mafia_system(self, text, local=False):
         self.public.append(text)
 
 
@@ -775,7 +775,7 @@ class _LaunchStub(MafiaUIMixin):
         self.msgs, self.btn = [], []
         self.mafia_start_btn = SimpleNamespace(configure=lambda **k: self.btn.append(k))
 
-    def add_mafia_system(self, t):
+    def add_mafia_system(self, t, local=False):
         self.msgs.append(t)
 
 
@@ -858,7 +858,7 @@ class _JoinStub(MafiaUIMixin):
     def add_mafia_host_dm(self, t):
         self.notes.append(t)
 
-    def add_mafia_system(self, t):
+    def add_mafia_system(self, t, local=False):
         self.public.append(t)
 
     def _mafia_broadcast(self, ev_type, **kw):

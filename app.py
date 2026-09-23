@@ -2512,6 +2512,8 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
         key = ("dm", ev["ip"], ev["port"])
         if self.current != key:
             return
+        if ev.get("mafia"):
+            return      # v1.95 — 게임 패킷은 대기열에 저장되지도, 대화에 나타나지도 않는데 "자동 재전송" 경고가 떴다
         if ev["ok"]:
             self.status.set("전송 완료")
         else:

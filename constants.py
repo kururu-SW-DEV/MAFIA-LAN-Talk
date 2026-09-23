@@ -26,7 +26,10 @@ ALL_IMAGE_EXTS = IMAGE_EXTS | PIL_IMAGE_EXTS  # "사진"으로 분류할 전체 
 # (신뢰할 수 없는 상대가 보낸 실행 파일/스크립트를 무심코 클릭해 바로 실행되는 것 방지).
 RISKY_FILE_EXTS = {".exe", ".bat", ".cmd", ".com", ".scr", ".pif", ".msi",
                     ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".ps1", ".ps1xml",
-                    ".hta", ".jar", ".reg", ".lnk"}
+                    ".hta", ".jar", ".reg", ".lnk",
+                    # v1.95 — 빠져 있던 실행·명령 성격 확장자(열면 코드가 실행되거나 바로가기가 실행됨)
+                    ".cpl", ".msc", ".chm", ".appref-ms", ".url", ".scf", ".iso", ".img", ".vhd", ".vhdx",
+                    ".msp", ".gadget", ".inf", ".psm1", ".sct"}
 
 # ========== 텔레그램풍 디자인 시스템 (티타늄 그레이 다크 테마) ==========
 C_SIDEBAR = "#1c1d21"     # 사이드바 (딥 티타늄 차콜)

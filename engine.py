@@ -78,6 +78,7 @@ class Engine:
         self._reliable_queues = {}      # (ip,port) -> queue.Queue
         self._reliable_workers = {}     # (ip,port) -> Thread(살아있으면)
         self._reliable_lock = threading.Lock()
+        self._flush_backoff = {}        # outbox 대상 -> 이 시각까지는 재시도 안 함
         self._pending_peer = {}         # msg_id -> (ip, port) — ack가 누구에게서 왔는지(생존 신호로 쓴다)
         self.log_lock = threading.Lock()
         self.settings_lock = threading.RLock()
@@ -894,8 +895,14 @@ class Engine:
     def _save_outbox(self):
         with self.outbox_lock:
             try:
-                with open(self.outbox_path, "w", encoding="utf-8") as f:
-                    json.dump(self.outbox, f, ensure_ascii=False, indent=2)
+                text = json.dumps(self.outbox, ensure_ascii=False, indent=2)
+                # v1.95 — 바뀐 게 없으면 다시 쓰지 않고(상대가 오프라인이면 3초마다 flush가 실패하며
+                # 매번 통째로 다시 썼다), 쓸 때는 원자적 치환으로 쓴다(쓰는 도중 강제 종료되면 대기 중이던
+                # 메시지 전부가 사라질 수 있었다).
+                if text == getattr(self, "_outbox_saved_text", None):
+                    return
+                self._atomic_write_text(self.outbox_path, text)
+                self._outbox_saved_text = text
             except OSError as e:
                 applog.log("save_outbox", e)
 
@@ -917,6 +924,9 @@ class Engine:
                 return
             items = list(self.outbox.get(target_k, []))
             if not items:
+                return
+            # v1.95 — 방금 실패한 상대에게는 presence가 올 때마다(3초) 또 시도하지 않고 15초 쉰다
+            if time.time() < self._flush_backoff.get(target_k, 0):
                 return
             self._flushing_targets.add(target_k)
         def worker():
@@ -942,6 +952,7 @@ class Engine:
                         else:
                             self._emit({"ev": "sent", "id": mid, "ok": True, "ip": ip, "port": port})
                     else:
+                        self._flush_backoff[target_k] = time.time() + 15
                         # 한 건이 실패했는데 계속 다음 건을 시도하면(상대가 방금
                         # 또 오프라인이 된 경우가 흔함), 뒤에 있던 메시지가 먼저
                         # 도착해 대화 순서가 뒤바뀔 수 있다. 순서를 지키기 위해
@@ -1347,6 +1358,12 @@ class Engine:
                     pe = self.peers.get(target)
                     if pe is not None:
                         pe["last"] = time.time()
+                    else:
+                        # v1.95 — 이 상대가 12초간 조용해 _prune에 지워진 뒤(presence가 안 오는 구성에서는
+                        # 흔하다)에도, 내가 보낸 패킷의 ack는 오고 있다 — 항목을 다시 만들어 살아 있음으로
+                        # 본다. 안 그러면 한 번 조용해진 사람은 영영 재접속으로 인식되지 않았다.
+                        self.peers[target] = {"name": target[0], "ip": target[0], "port": target[1],
+                                              "last": time.time(), "static": False}
             return
 
         if d.get("tid") == self.instance_id:      # 내가 보낸 것의 루프백
@@ -2081,7 +2098,8 @@ class Engine:
             # 되살아나 클라이언트 상태를 되감는다. 오프라인 재전송은 일반 채팅에만 쓴다.
             if not ok and not text.startswith("[MAFIA1]"):
                 self._enqueue_outbox(ip, port, pkt)
-            self._emit({"ev": "sent", "id": mid, "ok": ok, "ip": ip, "port": port})
+            self._emit({"ev": "sent", "id": mid, "ok": ok, "ip": ip, "port": port,
+                        "mafia": text.startswith("[MAFIA1]")})
         self._send_reliable(pkt, ip, port, on_done=_done)
         return mid
 
@@ -2669,7 +2687,10 @@ class Engine:
         with self.glock:
             groups_map = {gid: g.get("name") or "그룹" for gid, g in self.groups.items()}
 
-        with self.log_lock:
+        # v1.95 — 전체 로그 복호화 스캔 내내 log_lock을 쥐고 있어서, 글자를 칠 때마다 시작되는 검색
+        # 스레드 동안 수신 스레드가 일반 채팅 하나 기록하는 데도 막혔고(게임 패킷의 ack도 같이 늦어
+        # 재시도·폐기로 이어졌다) — 락은 파일 하나를 읽는 동안만 잡는다.
+        if True:
             for fname in files:
                 if not fname.endswith(".jsonl"):
                     continue
@@ -2694,7 +2715,7 @@ class Engine:
                     is_grp = False
 
                 try:
-                    with open(fpath, "r", encoding="utf-8") as f:
+                    with self.log_lock, open(fpath, "r", encoding="utf-8") as f:
                         rec_idx = 0
                         for line in f:
                             r = self._dec_log_line(line)

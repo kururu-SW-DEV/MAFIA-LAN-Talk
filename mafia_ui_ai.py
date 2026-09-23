@@ -33,13 +33,13 @@ class MafiaAIChatMixin:
         if getattr(self.core, "players", None):
             me_info = self.core.players.get(getattr(self.engine, "name", None)) or None
             if me_info is not None and not me_info.get("alive", True):
-                self.add_mafia_system("👻 사망한 참가자는 게임방 채팅을 칠 수 없습니다 — 유령 채팅방에서만 수다")
+                self.add_mafia_system("👻 사망한 참가자는 게임방 채팅을 칠 수 없습니다 — 유령 채팅방에서만 수다", local=True)
                 self._open_ghost_chat()
                 return
 
         # --- v1.39: 최후 변론 중 관전자 발언권 제한 ---
         if getattr(self, "_defense_entry_locked", False):
-            self.add_mafia_system("🚫 피고인의 최후 변론 시간입니다. 관전자는 발언할 수 없습니다.")
+            self.add_mafia_system("🚫 피고인의 최후 변론 시간입니다. 관전자는 발언할 수 없습니다.", local=True)
             return
         # 밤 행동 (역할자만)
         if self.core.phase == Phase.NIGHT:
@@ -104,7 +104,7 @@ class MafiaAIChatMixin:
                 return
             # 밤에는 일반 발언 제한 없음(로비 발언 역할 없음)
             self.add_mafia_bubble(text, "나", mine=True)
-            self._mafia_broadcast("user_say", name=me, text=text)
+            self._mafia_say_out(me, text)
             if getattr(self, "ai", None):
                 self.ai.observe_all(self.engine.name, text)
             # 마피아/의사/경찰 역할자가 아직 신청 안 했으면 안내
@@ -153,10 +153,21 @@ class MafiaAIChatMixin:
         # v1.61 — 게임 시작 후(낮/밤) 사람 발언은 로비 채팅과 달리 네트워크로
         # 전혀 전송되지 않고 있었다(복수 인간 플레이 전수 검토 지적) — 로비
         # 채팅(lobby_chat)과 동일한 방식(전원 메쉬 브로드캐스트)으로 통일.
-        self._mafia_broadcast("user_say", name=getattr(self.engine, "name", None), text=text)
+        self._mafia_say_out(getattr(self.engine, "name", None), text)
         if getattr(self, "ai", None):
             self.ai.observe_all(self.engine.name, text)   # 모든 AI가 내 말을 기억
         self._ai_hear_human(self.engine.name, text)
+
+    def _mafia_say_out(self, me, text):
+        """v1.95 — 게임 중 발언 송신. 예전엔 각 참가자가 다른 모든 참가자에게 직접 보냈다(전원 메쉬).
+        클라이언트끼리 서로 못 닿는 환경(인터넷 참가자, AP 격리, 다른 서브넷)에서는 방장만 두
+        사람의 말을 듣고 둘은 서로 벙어리였다. 클라이언트는 방장에게만 보내고, 방장이 나머지
+        참가자에게 중계한다(방장은 원래 모두와 연결돼 있고 명단·신원 묶음을 권위 있게 갖고 있다).
+        호스트 자신의 발언은 예전처럼 직접 방송한다."""
+        if self._mafia_is_host():
+            self._mafia_broadcast("user_say", name=me, text=text)
+        else:
+            self._mafia_send_to_host("user_say", name=me, text=text)
 
     # "나 경찰이야 / 나 의사야" 같은 커밍아웃 — 부인("경찰 아니야")은 제외하고 문장 끝맺음까지 요구해 오탐을 줄인다.
     # 끝맺음 뒤에 한글이 더 이어지면(이라면·이라도·이지만·이지 않을까 …) 가정·부정이라 커밍아웃이 아니다.

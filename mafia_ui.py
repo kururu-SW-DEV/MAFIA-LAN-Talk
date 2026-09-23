@@ -537,13 +537,14 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         label = "시민" if winner == "citizen" else "마피아"
         emoji = "🎉" if winner == "citizen" else "🩸"
         self._play_mafia_sound("citizen_win" if winner == "citizen" else "mafia_win")
-        self.add_mafia_system(f"⚖ 게임 종료 — {label} 팀 승리!")
+        # v1.95 — end를 이미 보냈고 클라이언트가 결과·정체 공개를 스스로 그리므로 이 두 줄은 방송하지 않는다(참가자 화면에 두 번 뜨던 것)
+        self.add_mafia_system(f"⚖ 게임 종료 — {label} 팀 승리!", local=True)
         # 정체 공개
         role_names = ROLE_LABEL_KR
         reveals = ", ".join(
             f"{n}({role_names.get(p['role'], '?')})"
             for n, p in self.core.players.items())
-        self.add_mafia_system(f"🎭 정체 공개 — {reveals}")
+        self.add_mafia_system(f"🎭 정체 공개 — {reveals}", local=True)
         self.add_mafia_host(
             f"{emoji} {label} 팀이 승리했습니다. 다들 수고하셨습니다. "
             "다시 시작하려면 [게임 시작]을 눌러 주세요.")
@@ -566,6 +567,8 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             kind="warning", ok_label="강제 종료", cancel_label="취소")
         if not ok:
             return
+        if not self.mafia_active or not self._mafia_is_host():
+            return          # v1.95 — 확인창이 떠 있는 동안 게임이 이미 끝났으면(승패가 났으면) 다시 끝내지 않는다
         self.add_mafia_system("🛑 방장이 게임을 강제로 종료했습니다.")
         self._mafia_broadcast("force_end")
         self._cancel_mafia_timer()

@@ -122,7 +122,7 @@ class MafiaViewMixin:
         if role:
             self._show_role_popup(role)
         else:
-            self.add_mafia_system("ℹ 아직 배정된 직업 정보가 없습니다.")
+            self.add_mafia_system("ℹ 아직 배정된 직업 정보가 없습니다.", local=True)
 
     def _mafia_maximize_window(self):
         """v1.49 — 마피아 게임이 시작되면 창을 1400x800(가로형)으로 띄운다.
@@ -811,7 +811,10 @@ class MafiaViewMixin:
             if not self._mafia_is_host():
                 host = getattr(self, "_recruiter_host", None)
                 last = getattr(self, "_mafia_last_host_ts", None)
-                if (host and last and time.time() - last > 60 and self._mafia_peer_raw(host) is None):
+                # v1.95 — 예전엔 "방장이 피어 목록에도 없다"까지 요구했는데, 정적 등록됐거나 대화 기록이
+                # 있는 방장은 목록에서 안 지워져 이 검사가 영영 안 걸렸다. 방장이 4초마다 보내는 hb 등
+                # 방장 이벤트가 45초 넘게 하나도 없으면 사라진 것으로 본다.
+                if (host and last and time.time() - last > 45):
                     self.add_mafia_system("⚠ 방장과의 연결이 끊겨 게임을 종료하고 로비로 돌아갑니다.")
                     self._client_reset_to_lobby()
                     self._refresh_mafia_roster()

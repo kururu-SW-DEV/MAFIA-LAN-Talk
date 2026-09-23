@@ -73,13 +73,17 @@ class MafiaNetMixin:
         eng = getattr(self, "engine", None)
         if eng is None:
             return None
+        best = None
         with eng.plock:
             for (ip, port), p in eng.peers.items():
-                alias = eng.get_alias((ip, port)) or ""
+                alias = eng.get_alias(("dm", ip, port)) or ""
                 pname = p.get("name", "")
                 if alias == name or pname == name:
-                    return (ip, port)
-        return None
+                    # v1.95 — 같은 이름이 여러 개면(IP가 바뀐 뒤 대화 기록에서 되살아난 옛 항목이 앞에
+                    # 온다) 첫 번째가 아니라 가장 최근에 소식이 있었던 항목을 고른다.
+                    if best is None or p.get("last", 0) > best[0]:
+                        best = (p.get("last", 0), (ip, port))
+        return best[1] if best else None
 
     def _mafia_peer_of(self, name):
         """이름에 대응하는 (ip, port). 이미 접속 주소에 묶인 이름(_mafia_ident)이면 그 주소를 쓴다.
@@ -105,7 +109,7 @@ class MafiaNetMixin:
                 for (ip, port), p in eng.peers.items():
                     if now - p.get("last", 0) >= PEER_TIMEOUT:
                         continue                       # 오래 소식 없는 옛 항목은 세지 않는다
-                    if (eng.get_alias((ip, port)) or "") == name or p.get("name", "") == name:
+                    if (eng.get_alias(("dm", ip, port)) or "") == name or p.get("name", "") == name:
                         n += 1
             return n > 1
         except Exception as _swallow_e:
@@ -158,6 +162,8 @@ class MafiaNetMixin:
         self._my_mafia_role = None
         self._my_mafia_mates = None
         self._recruiter_host = None
+        self._mafia_disconnected = set()      # v1.95 — 이전 판에 방장으로서 쌓은 끊김 목록이 남으면 그 사람들에게 방송을 안 보냈다
+        self._mafia_disconnect_strikes = {}
         self.core.lobby_reset()
         # v1.90 — 이 PC가 지난 판에는 방장이어서 실제 AI 에이전트를 만들었었다면(self.ai.players),
         # 이번 판은 남이 여는 판이라 self.ai가 그대로 남아 있다. _show_vote_popup/_open_revote_popup은
@@ -210,6 +216,8 @@ class MafiaNetMixin:
         tok = getattr(self, "_my_tok", None)
         if tok and ev_type in self._TOKEN_EVENTS:
             kw["tok"] = tok
+        if ev_type == "vote_cast" and getattr(self, "_vote_rid", None) is not None:
+            kw["rid"] = self._vote_rid
         self._mafia_send_private(host, ev_type, **kw)
         if ev_type in ("vote_cast", "defense_vote_cast"):
             self._expect_host_ack(ev_type, kw)
@@ -251,6 +259,14 @@ class MafiaNetMixin:
             self.root.after(self._ACK_WAIT_MS, lambda: self._check_host_ack(ev_type))
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
+
+    def _mafia_relay_say(self, name, text):
+        """호스트 전용 — 참가자 name의 발언을 다른 사람 참가자들에게 중계한다."""
+        me = getattr(self.engine, "name", None)
+        for n, p in list(self.core.players.items()):
+            if p.get("is_ai") or n in (me, name) or n in (getattr(self, "_mafia_disconnected", None) or ()):
+                continue
+            self._mafia_send_private(n, "say_relay", name=name, text=text)
 
     def _request_role_if_missing(self):
         """v1.90 — 게임 시작 뒤 몇 초가 지나도 내 직업을 못 받았으면(hdm 유실) 호스트에게
@@ -310,7 +326,7 @@ class MafiaNetMixin:
         "vote", "vote_open", "revote_open", "defense_vote_open", "defense_start", "verdict",
         "recruit_start", "recruit_update", "recruit_cancel", "ghost_say",
         "force_end",    # v1.89 — 방장의 게임 강제 종료
-        "day_timer", "vote_close"})   # v1.93 — 낮 타이머 동기화·투표 창 닫힘 통보
+        "day_timer", "vote_close", "hb", "say_relay"})   # v1.93 — 낮 타이머 동기화·투표 창 닫힘 통보
 
     # 참가자가 자기 이름으로 보내는 이벤트 → 본문에 적힌 '누구'가 실제 송신자와 같아야 한다.
     _PEER_CLAIM_FIELD = {
@@ -533,6 +549,11 @@ class MafiaNetMixin:
                     if not isinstance(got, str) or not hmac.compare_digest(got, want):
                         self._note_impersonation(ev.get(field), peer or ("?",))
                         return False
+                    # v1.95 — 참가자 비밀 토큰이 맞으면 진짜 본인이다. 게임 도중 IP가 바뀌었거나(DHCP·
+                    # Wi-Fi 로밍·NAT 재매핑) 포트가 달라진 경우 옛 주소 묶음 때문에 그 사람의 투표·밤 행동이
+                    # 전부 "사칭"으로 거부되다 끊김 처리로 사망했다 — 토큰이 맞으면 새 주소로 다시 묶는다.
+                    if peer is not None and self._ident().get(ev.get(field)) not in (None, tuple(peer)):
+                        self._ident()[ev.get(field)] = tuple(peer)
             return self._sender_is(ev.get(field), sender_name, peer)
         return True
 
@@ -626,6 +647,15 @@ class MafiaNetMixin:
             my_role = (self.core.players.get(me_r) or {}).get("role") or getattr(self, "_my_mafia_role", None)
             if my_role == "mafia" and ev.get("text"):
                 self._mafia_room_append(ev.get("name") or "?", ev.get("text", ""))
+            # v1.95 — 호스트는 클라이언트 마피아가 보낸 비밀 발언을 다른 사람 마피아 동료에게 중계한다
+            _snd = ev.get("name")
+            if (self._mafia_is_host() and isinstance(_snd, str) and isinstance(ev.get("text"), str) and ev.get("text")
+                    and (self.core.players.get(_snd) or {}).get("role") == "mafia"
+                    and (self.core.players.get(_snd) or {}).get("alive", True)):
+                for _n, _p in list(self.core.players.items()):
+                    if (_p.get("role") == "mafia" and not _p.get("is_ai") and _p.get("alive", True)
+                            and _n not in (_snd, me_r)):
+                        self._mafia_send_private(_n, "mafia_say", name=_snd, text=ev.get("text"))
         elif t == "ghost_to_ai":
             # 원격 사망자가 유령방에 쓴 말을 호스트의 사망 AI에게 전달
             spk = ev.get("name")
@@ -667,6 +697,20 @@ class MafiaNetMixin:
                 if self._mafia_is_host() and getattr(self, "ai", None):
                     self.ai.observe_all(name, say_text)
                     self._ai_hear_human(name, say_text)   # 원격 참가자의 발언에도 AI가 반응한다
+                if self._mafia_is_host():
+                    # v1.95 — 클라이언트가 방장에게만 보낸 발언을 나머지 참가자(보낸 사람 제외)에게 중계
+                    try:
+                        self._mafia_relay_say(name, say_text)
+                    except Exception as _swallow_e:
+                        applog.swallowed(_swallow_e)
+        elif t == "say_relay":
+            # 방장이 중계한 다른 참가자의 발언 — 방장에게서 온 것만 받는다(HOST_ONLY 검증을 통과함)
+            name = ev.get("name") or "?"
+            say_text = ev.get("text", "")
+            if isinstance(name, str) and isinstance(say_text, str) and say_text and not self._mafia_is_host():
+                _info = (self.core.players.get(name) or {})
+                if not self.mafia_active or (_info and not _info.get("is_ai") and _info.get("alive", True)):
+                    self.add_mafia_bubble(say_text, name)
         elif t == "sys":
             _txt = ev.get("text", "")
             if isinstance(_txt, str) and _txt.startswith("✅ 방장이 내"):
@@ -852,17 +896,20 @@ class MafiaNetMixin:
                     self._day_tick_loop()
         elif t == "vote_close":
             # v1.93 — 호스트가 이미 개표를 시작했는데 클라이언트 투표 팝업이 계속 눌리던 문제
-            if not self._mafia_is_host() and getattr(self, "_vote_lbl", None):
+            if not self._mafia_is_host() and (getattr(self, "_vote_lbl", None) or getattr(self, "_revote_btns", None)):
+                self._revote_btns = None
                 self._cancel_vote_popup()
         elif t == "vote_open":
             # v1.61 — 호스트가 낮 투표를 개시하면 원격 화면에도 투표 팝업을 연다.
             if not self._mafia_is_host() and self.mafia_active:
+                self._vote_rid = ev.get("rid")     # v1.95 — 이 투표판의 번호(내 vote_cast에 실어 보낸다)
                 self.core.votes.clear()
                 self.core.abstains.clear()
                 self.core.phase = Phase.DAY
                 self._show_vote_popup()
         elif t == "revote_open":
             if not self._mafia_is_host() and self.mafia_active:
+                self._vote_rid = ev.get("rid")
                 self._open_revote_popup(ev.get("tied") or [])
         elif t == "defense_vote_open":
             if not self._mafia_is_host() and self.mafia_active:
@@ -875,6 +922,11 @@ class MafiaNetMixin:
             if not self._mafia_is_host():
                 self._client_force_quit_end()
         elif t == "defense_start":
+            # v1.95 — 재투표 팝업을 닫던 유일한 것이 클라이언트 기한 타이머였는데 v1.92가 그걸
+            # 이 시점에 취소하게 해서, 재투표 창이 변론 내내 남아 눌리는 채로 떠 있었다.
+            if not self._mafia_is_host() and (getattr(self, "_revote_btns", None) or getattr(self, "_vote_lbl", None)):
+                self._revote_btns = None
+                self._cancel_vote_popup()
             self.core.defendant = ev.get("name")
             self._defense_in_progress = True
             self._start_defense_visuals(ev.get("name", "피고인"))
@@ -914,6 +966,11 @@ class MafiaNetMixin:
                 self._refresh_vote_progress_label()
         elif t == "vote_cast":
             # 클라이언트 → 호스트: 원격 참가자의 실제 낮 투표 선택.
+            # v1.95 — 4초 뒤 재전송된 1차 투표가 재투표 중에 도착하면 "동률 후보 중 하나"라는 이유로
+            # 재투표 표로 세어졌다. 표에 투표판 번호(rid)가 실려 있고 지금 판과 다르면 버린다.
+            rid = ev.get("rid")
+            if rid is not None and rid != getattr(self, "_vote_rid", None):
+                return True
             self._host_receive_vote_cast(ev.get("voter"), ev.get("target"))
         elif t == "defense_vote_cast":
             # 클라이언트 → 호스트: 원격 참가자의 최후 변론 찬반 표.
@@ -1088,6 +1145,16 @@ class MafiaNetMixin:
             # _send_reliable 워커·프레즌스 루프와 경합). eng.peers를 이 폴링 한 번에 딱
             # 한 번만 복사해 두고, 그 사본으로 모든 참가자의 이름을 맞춰본다.
             eng = self.engine
+            # v1.95 — 방장이 4초마다 모든 사람 참가자에게(끊긴 사람 포함) 작은 hb를 보낸다. 조용한 구간
+            # (사람 피고인 변론 60초, LLM 없는 낮 150초 등)에는 보낼 게임 패킷이 없어 ack 기반 생존 신호
+            # (v1.94)가 끊겨 멀쩡한 사람이 끊김·사망으로 판정됐고, 끊긴 사람에겐 v1.92가 방송을 안 보내
+            # 다시 살아났는지 알 길도 없었다. 클라이언트도 이걸로 방장이 살아 있음을 안다.
+            try:
+                for _n, _p in list(self.core.players.items()):
+                    if not _p.get("is_ai") and _n != me:
+                        self._mafia_send_private(_n, "hb")
+            except Exception as _swallow_e:
+                applog.swallowed(_swallow_e)
             with eng.plock:
                 peer_snapshot = [((ip, port), dict(p)) for (ip, port), p in eng.peers.items()]
             ident = self._ident()
@@ -1105,7 +1172,7 @@ class MafiaNetMixin:
                             break
                 else:
                     for (ip, port), info in peer_snapshot:
-                        alias = eng.get_alias((ip, port)) or ""
+                        alias = eng.get_alias(("dm", ip, port)) or ""
                         if (alias == name or info.get("name", "") == name) and now - info.get("last", 0) < PEER_TIMEOUT:
                             online = True
                             break
