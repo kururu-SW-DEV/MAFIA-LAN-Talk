@@ -1258,6 +1258,13 @@ class Engine:
                     if v and not v.get("static") and v.get("last", 0) < cutoff:
                         del self.peers[key]
                         changed = True
+        # v1.98 — 목록에 남는 상대(정적 등록·대화 기록 있음)는 끊겨도 삭제되지 않아 "접속 중 → 대기"
+        # 전환에 화면 갱신 신호가 없었다. 만료된 상대 집합이 바뀌면 갱신한다.
+        with self.plock:
+            stale_now = frozenset(k for k, v in self.peers.items() if v.get("last", 0) < cutoff)
+        if stale_now != getattr(self, "_stale_seen", frozenset()):
+            self._stale_seen = stale_now
+            changed = True
         if changed:
             self._emit({"ev": "peer"})
 
@@ -1891,6 +1898,11 @@ class Engine:
                     changed = True
                 if status is not None and p.get("status") != status:
                     p["status"] = status
+                    changed = True
+                # v1.98 — 목록에 이미 있던(대기로 보이던) 상대가 다시 살아난 것도 화면을 갱신해야 한다.
+                # 이름·아바타·상태가 그대로면 changed가 False라 사이드바가 안 바뀌어, 먼저 켠 PC는
+                # 채팅 탭을 눌러 목록을 다시 그려야만 상대가 접속 중으로 보였다.
+                if time.time() - p.get("last", 0) >= PEER_TIMEOUT:
                     changed = True
                 p["last"] = time.time()
         if name and name != "?":
