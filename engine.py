@@ -78,6 +78,7 @@ class Engine:
         self._reliable_queues = {}      # (ip,port) -> queue.Queue
         self._reliable_workers = {}     # (ip,port) -> Thread(살아있으면)
         self._reliable_lock = threading.Lock()
+        self._pending_peer = {}         # msg_id -> (ip, port) — ack가 누구에게서 왔는지(생존 신호로 쓴다)
         self.log_lock = threading.Lock()
         self.settings_lock = threading.RLock()
         self.hidden = set()             # {("dm",ip,port), ("grp",gid)} — 목록에서 숨긴 대화
@@ -1330,10 +1331,22 @@ class Engine:
         ip = addr[0]
 
         if dtype == "ack":
+            mid_a = str(d.get("id") or "")
             with self.pending_lock:
-                e = self.pending.get(str(d.get("id") or ""))
+                e = self.pending.get(mid_a)
                 if e is not None:
                     e.set()
+                target = self._pending_peer.get(mid_a)
+            # v1.94 — 응답(ack)도 "상대가 살아 있다"는 증거다. 지금까지는 상대의 presence 패킷만 생존
+            # 신호로 셌는데, 인터넷을 사이에 둔 연결(사설망↔공인망·NAT)에서는 내가 보내는 방향만
+            # 열려 있고 상대의 presence는 내게 못 오는 일이 흔하다 — 게임 내용은 상대에게 잘 가고
+            # ack도 돌아오는데 "응답 없음"으로 끊김 판정돼 사망 처리됐다. 내가 보낸 패킷의 ack가
+            # 그 상대 주소에서 오면 그 상대의 마지막 응답 시각을 갱신한다.
+            if target and target[0] == ip:
+                with self.plock:
+                    pe = self.peers.get(target)
+                    if pe is not None:
+                        pe["last"] = time.time()
             return
 
         if d.get("tid") == self.instance_id:      # 내가 보낸 것의 루프백
@@ -1969,6 +1982,7 @@ class Engine:
         ack = threading.Event()
         with self.pending_lock:
             self.pending[mid] = ack
+            self._pending_peer[mid] = (ip, port)
         ok = False
         for _ in range(MSG_RETRY_MAX):
             self._send_dict(pkt, ip, port)
@@ -1977,6 +1991,7 @@ class Engine:
                 break
         with self.pending_lock:
             self.pending.pop(mid, None)
+            self._pending_peer.pop(mid, None)
         return ok
 
     def _send_reliable(self, pkt, ip, port, on_done=None):

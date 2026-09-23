@@ -217,7 +217,7 @@ try:
 
     check("[B] B 연결 끊김이 감지되어 시스템 메시지로 안내됨(역할 비노출)",
           wait_gui(lambda: any("이팀장B" in t and "끊긴 것 같습니다" in t for t in sys_msgs),
-                   timeout=20))
+                   timeout=32))   # v1.94 — ack도 생존 신호라 마지막 응답이 조금 늦게 갱신된다
     leak = [t for t in sys_msgs if "이팀장B" in t and "끊긴 것 같습니다" in t
             and any(r in t for r in ("마피아", "의사", "경찰", "시민"))]
     check("[B] 끊김 안내 메시지가 역할 정보를 노출하지 않음", len(leak) == 0)
