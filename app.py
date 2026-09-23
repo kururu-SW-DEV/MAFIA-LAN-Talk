@@ -583,6 +583,10 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
         self.mafia_force_quit_btn = self._btn(self.mafia_bar, "🛑 게임 강제 종료", self.mafia_force_quit_clicked,
                                               "#7f1d1d", "white", "#991b1b",
                                               font=FONT_XS_PAD, padx=2, pady=2)
+        # v1.97 — 클라이언트(방장이 아닌 참가자)가 게임 도중 스스로 방을 나갈 수단이 없었다.
+        self.mafia_leave_btn = self._btn(self.mafia_bar, "🚪 방 나가기", self.mafia_leave_clicked,
+                                         "#7f1d1d", "white", "#991b1b",
+                                         font=FONT_XS_PAD, padx=2, pady=2)
         self.mafia_bar_is_game = False
 
         # 이모지가 Tk 기본 렌더링에서 단색(주로 검정)으로 뭉개지는 문제 우회 —
@@ -602,10 +606,11 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
         _btn_min_h = emoji_render.measure_content_height(
             "C:/Windows/Fonts/malgunbd.ttf", _emoji_px,
             ["⚙ 게임 설정", "🃏 내 직업 확인", "❌ 모집 취소", "🙋 참가 신청",
-             "📢 참가자 모집", "🎮 게임 시작 (인간 8명)", "[게임 진행 중]", "🛑 게임 강제 종료",
+             "📢 참가자 모집", "🎮 게임 시작 (인간 8명)", "[게임 진행 중]", "🛑 게임 강제 종료", "🚪 방 나가기",
              "내 직업: 마피아 🔪", "내 직업: 의사 💉", "내 직업: 경찰 🕵", "내 직업: 시민 🧑‍🌾"])
         for _w in (self.mafia_cfg_btn, self.mafia_role_btn, self.mafia_cancel_recruit_btn,
-                   self.mafia_join_btn, self.mafia_start_btn, self.mafia_force_quit_btn):
+                   self.mafia_join_btn, self.mafia_start_btn, self.mafia_force_quit_btn,
+                   self.mafia_leave_btn):
             emoji_render.enable_pill_button(_w, "C:/Windows/Fonts/malgunbd.ttf", _emoji_px,
                                             radius=10, pad_x=16, pad_y=4, min_content_h=_btn_min_h)
 

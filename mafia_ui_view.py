@@ -400,7 +400,7 @@ class MafiaViewMixin:
         둥근 버튼들의 '투명해 보이는' 네 귀퉁이도 새 배경색에 맞춰 다시
         그린다 — 안 하면 예전 배경색이 모서리에 네모나게 남아 보인다."""
         for name in ("mafia_cfg_btn", "mafia_role_btn", "mafia_cancel_recruit_btn",
-                     "mafia_join_btn", "mafia_start_btn", "mafia_force_quit_btn"):
+                     "mafia_join_btn", "mafia_start_btn", "mafia_force_quit_btn", "mafia_leave_btn"):
             w = getattr(self, name, None)
             redraw = getattr(w, "_pill_redraw", None)
             if callable(redraw):
@@ -597,6 +597,7 @@ class MafiaViewMixin:
                 self.mafia_force_quit_btn.pack(side="right", padx=(6, 6), pady=8)
             else:
                 self.mafia_force_quit_btn.pack_forget()
+        self._refresh_leave_btn()
         self.mafia_bar.pack(fill="x", before=self.chat_wrap)
         self._refresh_mafia_roster()
         self.entry.configure(state="normal", font=FONT_MSG)

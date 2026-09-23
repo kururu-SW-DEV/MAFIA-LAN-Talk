@@ -153,6 +153,46 @@ class MafiaNetMixin:
             applog.swallowed(_swallow_e)
         self._client_reset_to_lobby()
 
+    def _refresh_leave_btn(self):
+        """v1.97 — [🚪 방 나가기]는 게임에 참가 중인 클라이언트(방장 아님)에게만, 게임방 화면에서 보인다."""
+        b = getattr(self, "mafia_leave_btn", None)
+        if b is None:
+            return
+        show = (getattr(self, "mafia_active", False) and not self._mafia_is_host()
+                and getattr(self, "_in_game", True) and self.current == self.mafia_room_key())
+        if show:
+            b.pack(side="right", padx=(6, 6), pady=8)
+        else:
+            b.pack_forget()
+
+    def mafia_leave_clicked(self):
+        """v1.97 — 클라이언트가 진행 중인 게임을 스스로 떠난다. 방장에게 알려(leave_game) 사망 처리하게 하고
+        내 화면은 즉시 로비로 되돌린다. 이후 게임 이벤트는 _in_game=False로 무시한다."""
+        if not getattr(self, "mafia_active", False) or self._mafia_is_host():
+            return
+        ok = self._embed_confirm(
+            "방 나가기",
+            "진행 중인 마피아 게임에서 나갈까요?\n"
+            "방장에게 알려져 나는 게임에서 제외(사망 처리)되며, 다시 들어올 수 없습니다.",
+            kind="warning", ok_label="나가기", cancel_label="취소")
+        if not ok or not getattr(self, "mafia_active", False):
+            return
+        me = getattr(self.engine, "name", None)
+        try:
+            self._mafia_send_to_host("leave_game", name=me)
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+        self._in_game = False
+        self._mafia_room_close()
+        self._reset_ghost_state()
+        try:
+            self._mafia_overlay_close()
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+        self._clear_client_defense()
+        self._client_reset_to_lobby()
+        self.add_mafia_system("🚪 게임에서 나왔습니다.", local=True)
+
     def _client_reset_to_lobby(self):
         """게임이 끝난 뒤(정상 종료·강제 종료 공통) 원격 참가자 쪽 상태를 로비로 되돌린다."""
         self.mafia_active = False
@@ -178,6 +218,7 @@ class MafiaNetMixin:
             self.mafia_role_btn.pack_forget()
         if hasattr(self, "mafia_force_quit_btn"):
             self.mafia_force_quit_btn.pack_forget()
+        self._refresh_leave_btn()
         if hasattr(self, "mafia_start_btn"):
             self.mafia_start_btn.configure(text="📢 참가자 모집", bg="#b91c1c",
                                            activebackground="#7f1d1d", state="normal")
@@ -318,7 +359,7 @@ class MafiaNetMixin:
         pend.pop("defense_vote_cast" if "찬반" in text else "vote_cast", None)
 
     # 토큰이 있어야 하는 참가자→호스트 이벤트(투표·찬반·밤 행동)
-    _TOKEN_EVENTS = frozenset({"vote_cast", "defense_vote_cast", "night_action"})
+    _TOKEN_EVENTS = frozenset({"vote_cast", "defense_vote_cast", "night_action", "leave_game"})
 
     # 방장(호스트)만 보낼 수 있는 이벤트 — 다른 사람이 보내면 폐기한다.
     _HOST_ONLY_EVENTS = frozenset({
@@ -334,7 +375,7 @@ class MafiaNetMixin:
         "vote_cast": "voter", "defense_vote_cast": "voter", "night_action": "actor",
         "mafia_to_ai": "name", "ghost_to_ai": "name",
         "recruit_join": "name", "recruit_leave": "name",
-        "role_request": "who"}
+        "role_request": "who", "leave_game": "name"}
 
     def _ident(self):
         """이름 → 접속 주소(ip, port) 묶음. 새 모집이 시작될 때마다 비운다."""
@@ -771,6 +812,8 @@ class MafiaNetMixin:
                 self.mafia_join_btn.pack_forget()
             if hasattr(self, "mafia_cancel_recruit_btn"):
                 self.mafia_cancel_recruit_btn.pack_forget()
+            self._in_game = True
+            self._refresh_leave_btn()
             # v1.61 — 원격 참가자 명단 동기화. 이전엔 이 이벤트가 UI 갱신만 하고
             # self.core.players를 전혀 채우지 않아, 원격 참가자의 core는 게임
             # 시작 후에도 계속 빈 채로 남아 생존자 조회·투표·밤 행동 렌더링이
@@ -982,6 +1025,22 @@ class MafiaNetMixin:
             # v1.90 — 클라이언트 → 호스트: 처음 역할 통보(hdm)를 못 받았으니 다시 보내 달라.
             if self._mafia_is_host():
                 self._resend_role_dm(ev.get("who"))
+        elif t == "leave_game":
+            # v1.97 — 클라이언트가 스스로 나감: 접속 끊김과 같은 방식으로 사망 처리하고 방송을 끊는다.
+            nm = ev.get("name")
+            p = self.core.players.get(nm) if self._mafia_is_host() and self.mafia_active else None
+            if p is not None and not p.get("is_ai"):
+                known = getattr(self, "_mafia_disconnected", None)
+                if known is None:
+                    known = self._mafia_disconnected = set()
+                known.add(nm)
+                self.add_mafia_system(f"🚪 {nm}님이 게임에서 나갔습니다.")
+                if p.get("alive", True):
+                    p["alive"] = False
+                    self._mafia_broadcast("death", name=nm)
+                    winner = self.core.check_winner()
+                    if winner:
+                        self._on_game_end(winner)
         elif t == "death":
             # v1.61 — 접속 끊김 등으로 인한 사망 처리 동기화(호스트가 판정).
             nm = ev.get("name")
