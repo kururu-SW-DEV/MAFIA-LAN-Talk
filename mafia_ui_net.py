@@ -164,6 +164,7 @@ class MafiaNetMixin:
             b.pack(side="right", padx=(6, 6), pady=8)
         else:
             b.pack_forget()
+        self._mafia_bar_fix_order()
 
     def mafia_leave_clicked(self):
         """v1.97 — 클라이언트가 진행 중인 게임을 스스로 떠난다. 방장에게 알려(leave_game) 사망 처리하게 하고
@@ -1076,6 +1077,7 @@ class MafiaNetMixin:
                         activebackground="#b91c1c" if self._my_joined else "#047857"
                     )
                     self.mafia_join_btn.pack(side="right", padx=(10, 6), pady=8)
+                self._mafia_bar_fix_order()
                 self.mafia_phase_lbl.config(text=f"📢 {host}님 방 참가 모집 중…")
                 self.add_mafia_system(
                     f"📢 [마피아 참가자 모집] 방장 '{host}' 님이 게임 참가자를 모집합니다!\n"

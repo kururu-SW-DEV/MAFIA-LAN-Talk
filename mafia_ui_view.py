@@ -598,6 +598,7 @@ class MafiaViewMixin:
             else:
                 self.mafia_force_quit_btn.pack_forget()
         self._refresh_leave_btn()
+        self._mafia_bar_fix_order()
         self.mafia_bar.pack(fill="x", before=self.chat_wrap)
         self._refresh_mafia_roster()
         self.entry.configure(state="normal", font=FONT_MSG)
@@ -835,6 +836,7 @@ class MafiaViewMixin:
         return ""
 
     def refresh_mafia_phase_label(self):
+        self._mafia_bar_fix_order()
         if getattr(self, "mafia_active", False) and getattr(self, "_roster_tick_id", None) is None:
             self._roster_tick_id = self.root.after(0, self._mafia_roster_tick)
         else:

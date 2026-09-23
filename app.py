@@ -146,7 +146,7 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
         self._mention_popup = None      # @ 멘션 자동완성 팝업 위젯
         self._search_result_widgets = []  # 사이드바 통합 검색 결과 위젯 리스트
 
-        root.title("MAFIA — LAN Talk")
+        root.title(f"MAFIA — LAN Talk {APP_VERSION}")
         # v1.51 — 앱 기본 해상도를 1400x800(가로형)으로. 예전 9:16 세로 기본값은
         # 마피아 게임 전용 빌드에는 처음부터 안 맞아서, 게임 시작을 기다리지 않고
         # 앱을 켜는 순간부터 적용한다. 화면 정중앙에 띄운다.

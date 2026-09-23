@@ -287,6 +287,31 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         self._mafia_broadcast("recruit_cancel", host=me)
         self._mafia_pack_lobby_buttons()
 
+    _BAR_ORDER = ("mafia_cfg_btn", "mafia_role_btn", "mafia_start_btn", "mafia_cancel_recruit_btn",
+                  "mafia_join_btn", "mafia_force_quit_btn", "mafia_leave_btn")   # 오른쪽 끝 → 왼쪽
+
+    def _mafia_bar_fix_order(self):
+        """v1.99 — 게임바 버튼의 좌우 순서를 항상 같게 맞춘다. side="right"로 pack하면 '마지막에 pack한 것'이
+        가장 왼쪽에 놓이는데, 버튼마다 여러 곳(방 선택·모집 알림·취소·초기화)에서 따로 pack/pack_forget해 와서
+        어떤 이벤트가 어떤 순서로 도착했느냐에 따라 [참가 신청]과 [게임 설정]의 위치가 뒤바뀔 수 있었다
+        (한 번 pack된 위젯을 다시 pack하면 맨 뒤로 옮겨진다). 지금 보이는 버튼만 골라 정해진 순서로 다시 pack한다."""
+        try:
+            bar = getattr(self, "mafia_bar", None)
+            if bar is None:
+                return
+            widgets = [getattr(self, n, None) for n in self._BAR_ORDER]
+            shown = [w for w in widgets if w is not None and w.winfo_manager() == "pack"]
+            current = [w for w in bar.pack_slaves() if w in shown]
+            if current == shown:
+                return
+            for w in shown:
+                w.pack_forget()
+            for w in shown:
+                pad = (10, 6) if w is getattr(self, "mafia_start_btn", None) else (6, 6)
+                w.pack(side="right", padx=pad, pady=8)
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
     def _mafia_pack_lobby_buttons(self):
         """로비(모집 전) 상태의 게임바 버튼 배치: [참가 신청][참가자 모집]. 참가 신청 버튼은 방장의
         모집 알림을 못 받았어도 누를 수 있게 로비에서 항상 보인다(진행 중인 판·모집 중인 방장에게는 숨김)."""
@@ -302,6 +327,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             start.pack(side="right", padx=(10, 6), pady=8)
             join.config(text="🙋 참가 신청", bg="#059669", activebackground="#047857")
             join.pack(side="right", padx=(6, 0), pady=8)
+            self._mafia_bar_fix_order()
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
 
