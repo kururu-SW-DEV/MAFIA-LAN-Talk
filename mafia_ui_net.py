@@ -96,6 +96,14 @@ class MafiaNetMixin:
             return bound
         return self._mafia_peer_raw(name)
 
+    def _is_ai_name(self, name):
+        try:
+            p = self.core.players.get(name)
+            return bool(p and p.get("is_ai"))
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+            return False
+
     def _mafia_name_ambiguous(self, name):
         """지금 접속 중인 상대 중 같은 이름(별칭)을 쓰는 사람이 둘 이상인가. 그러면 누가 진짜인지
         알 수 없어 이름을 어느 한쪽 주소에 묶을 수 없다."""
@@ -179,10 +187,18 @@ class MafiaNetMixin:
         if not ok or not getattr(self, "mafia_active", False):
             return
         me = getattr(self.engine, "name", None)
-        try:
-            self._mafia_send_to_host("leave_game", name=me)
-        except Exception as _swallow_e:
-            applog.swallowed(_swallow_e)
+        host, tok = getattr(self, "_recruiter_host", None), getattr(self, "_my_tok", None)
+
+        def _send_leave():
+            try:
+                if host:
+                    self._mafia_send_private(host, "leave_game", name=me, **({"tok": tok} if tok else {}))
+            except Exception as _swallow_e:
+                applog.swallowed(_swallow_e)
+        _send_leave()
+        # v1.100 — 한 번만 보내면 유실될 때 방장은 나간 사람을 계속 생존자로 세어 매 단계 시한까지 기다렸다.
+        for _d in (2500, 7000):
+            self.root.after(_d, _send_leave)
         self._in_game = False
         self._mafia_room_close()
         self._reset_ghost_state()
@@ -205,6 +221,12 @@ class MafiaNetMixin:
         self._recruiter_host = None
         self._mafia_disconnected = set()      # v1.95 — 이전 판에 방장으로서 쌓은 끊김 목록이 남으면 그 사람들에게 방송을 안 보냈다
         self._mafia_disconnect_strikes = {}
+        self._mafia_left = set()
+        try:
+            self._cancel_mafia_timer()
+            self._cancel_vote_popup()      # v1.100 — 남아 있던 재투표 기한 등이 나중에 다른 팝업을 닫지 않게
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
         self.core.lobby_reset()
         # v1.90 — 이 PC가 지난 판에는 방장이어서 실제 AI 에이전트를 만들었었다면(self.ai.players),
         # 이번 판은 남이 여는 판이라 self.ai가 그대로 남아 있다. _show_vote_popup/_open_revote_popup은
@@ -272,19 +294,24 @@ class MafiaNetMixin:
         호스트가 접수하면 "✅ 방장이 내 표를 접수했습니다" 쪽지를 돌려준다. 4초 안에 없으면 한 번 다시 보내고,
         그래도 없으면 원인을 안내한다."""
         pend = self.__dict__.setdefault("_ack_pending", {})
-        pend[ev_type] = (dict(kw), 0)
+        # v1.100 — 1차 투표의 확인 타이머가 재투표 항목을 보고 너무 일찍 재전송·경고하던 문제: 항목마다 세대를 붙여
+        # 낡은 타이머는 아무것도 하지 않게 한다.
+        gen = self._ack_gen = getattr(self, "_ack_gen", 0) + 1
+        pend[ev_type] = (dict(kw), 0, gen)
         try:
-            self.root.after(self._ACK_WAIT_MS, lambda: self._check_host_ack(ev_type))
+            self.root.after(self._ACK_WAIT_MS, lambda: self._check_host_ack(ev_type, gen))
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
 
-    def _check_host_ack(self, ev_type):
+    def _check_host_ack(self, ev_type, gen=None):
         pend = getattr(self, "_ack_pending", {})
         item = pend.get(ev_type)
+        if item and gen is not None and item[2] != gen:
+            return                           # 그 뒤에 새로 보낸 표가 있다 — 낡은 타이머는 무시
         if not item or not getattr(self, "mafia_active", False) or self._mafia_is_host():
             pend.pop(ev_type, None)
             return
-        kw, tries = item
+        kw, tries, gen = item
         host = getattr(self, "_recruiter_host", None)
         label = "찬반 표" if ev_type == "defense_vote_cast" else "투표"
         if tries >= 1 or not host:
@@ -295,10 +322,10 @@ class MafiaNetMixin:
                 f"⚠ 방장이 내 {label}를 접수했다는 확인이 없습니다. 방장과 같은 버전(v1.76 이상)인지, "
                 "방장과 연결이 끊기지 않았는지 확인하세요. 방장 화면에 '접수'가 안 뜨면 집계되지 않은 것입니다.")
             return
-        pend[ev_type] = (kw, tries + 1)
+        pend[ev_type] = (kw, tries + 1, gen)
         try:
             self._mafia_send_private(host, ev_type, **kw)      # 한 번 더 보낸다(호스트는 같은 표를 덮어쓸 뿐)
-            self.root.after(self._ACK_WAIT_MS, lambda: self._check_host_ack(ev_type))
+            self.root.after(self._ACK_WAIT_MS, lambda: self._check_host_ack(ev_type, gen))
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
 
@@ -331,6 +358,8 @@ class MafiaNetMixin:
         try:
             if not pname or not isinstance(pname, str):
                 return
+            if pname == getattr(self.engine, "name", None):
+                return   # v1.100 — 방장 본인의 직업·토큰은 누구에게도 다시 보내지 않는다
             info = self.core.players.get(pname)
             if not info or info.get("is_ai") or not info.get("role"):
                 return   # 아직 역할 배정 전이거나(호출 타이밍 이상) AI — 보낼 게 없다
@@ -569,6 +598,29 @@ class MafiaNetMixin:
             return bool(host) and self._sender_is(host, sender_name, peer)
         field = self._PEER_CLAIM_FIELD.get(t)
         if field:
+            if am_host:
+                # v1.100 — 방장 자신의 이름과 AI 이름은 방장의 이름↔주소 묶음에도 토큰에도 없어, 표시 이름만
+                # 같게 바꾼 다른 PC가 그 이름으로 투표·밤 행동·발언·나가기를 보낼 수 있었다(직업 회신 유출,
+                # AI 표 선점, 방장 사망 처리 등). 원격 참가자가 방장·AI의 이름으로 온 요청은 언제나 거짓이다.
+                claimed_n = ev.get(field)
+                me_n = getattr(self.engine, "name", None)
+                if claimed_n and (claimed_n == me_n or self._is_ai_name(claimed_n)):
+                    try:
+                        applog.log("mafia_claim_self_or_ai", detail=f"t={t} name={claimed_n} from={sender_name}")
+                    except Exception as _swallow_e:
+                        applog.swallowed(_swallow_e)
+                    if t == "recruit_join" and claimed_n == me_n:
+                        try:
+                            self.add_mafia_host_dm(f"⚠ '{claimed_n}' 이름은 방장과 같아 참가를 받지 않았습니다. 표시 이름을 바꾼 뒤 다시 신청하세요.")
+                        except Exception as _swallow_e:
+                            applog.swallowed(_swallow_e)
+                    return False
+            if (not am_host and t in ("user_say", "mafia_say") and getattr(self, "mafia_active", False)
+                    and not (host and self._sender_is(host, sender_name, peer))):
+                # v1.100 — 게임 중 클라이언트는 발언을 방장에게만 보내고 방장이 중계한다(v1.95). 그런데
+                # 받는 쪽은 이름 비교만으로 user_say·mafia_say를 받아, 구경꾼이 참가자 이름으로 가짜 채팅·
+                # 마피아 비밀방 발언을 띄울 수 있었다 — 진행 중인 판에서는 방장이 보낸 것만 받는다.
+                return False
             if t == "mafia_say" and host and self._sender_is(host, sender_name, peer):
                 return True             # 방장이 중계하는 AI 마피아 발언·목표 안내
             if t == "recruit_join" and self._ident().get(ev.get(field)) is None \
@@ -627,8 +679,12 @@ class MafiaNetMixin:
         t = ev.get("t")
         if not self._proto_authorized(t, ev, sender_name, peer):
             try:
-                import applog
-                applog.log("mafia_proto_rejected", detail=f"t={t} from={sender_name}")
+                # v1.100 — 거부된 패킷마다 UI 스레드에서 파일에 쓰던 것을 (종류, 송신자)별로 10초에 한 번만 기록한다
+                _rl = self.__dict__.setdefault("_rej_log_ts", {})
+                _now = time.time()
+                if _now - _rl.get((t, sender_name), 0) > 10:
+                    _rl[(t, sender_name)] = _now
+                    applog.log("mafia_proto_rejected", detail=f"t={t} from={sender_name}")
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
             return False
@@ -773,7 +829,7 @@ class MafiaNetMixin:
                 # 조사한 사람을 또 고르며 밤을 낭비할 수 있었다(v1.85가 의사에게 한 것과 같은 조치).
                 if not self._mafia_is_host() and "조사 결과" in msg_txt:
                     import re as _re
-                    _m = _re.search(r"\]\s*(\S+?)님은 (마피아입니다|마피아가 아닙니다)", msg_txt)
+                    _m = _re.search(r"\]\s*(.+?)님은 (마피아입니다|마피아가 아닙니다)", msg_txt)
                     if _m:
                         self.core.police_invest[_m.group(1)] = "mafia" if _m.group(2) == "마피아입니다" else "citizen"
                 if ev.get("tok") and not self._mafia_is_host():
@@ -1025,16 +1081,38 @@ class MafiaNetMixin:
         elif t == "role_request":
             # v1.90 — 클라이언트 → 호스트: 처음 역할 통보(hdm)를 못 받았으니 다시 보내 달라.
             if self._mafia_is_host():
-                self._resend_role_dm(ev.get("who"))
+                who = ev.get("who")
+                if ev.get("nostart") and isinstance(who, str) and who in self.core.players                         and not self.core.players[who].get("is_ai") and self.mafia_active                         and who not in (getattr(self, "_mafia_left", None) or ()):
+                    # v1.100 — 시작 패킷(start)을 놓쳐 게임 화면 없이 hb만 받는 참가자에게 명단을 다시 보낸다
+                    self._mafia_send_private(who, "start", players=[
+                        {"name": n, "is_ai": p.get("is_ai", False)} for n, p in self.core.players.items()])
+                self._resend_role_dm(who)
+        elif t == "hb":
+            # v1.100 — 방장은 게임 중에만 hb를 보낸다. 내가 게임 참가자인데(모집 알림·참가 신청을 거쳤는데)
+            # 게임이 진행 중이 아니라면 start를 놓친 것이다 — 3.6초 재시도가 다 실패하면 그 판 내내
+            # 게임 화면 없이 방장만 시한까지 기다렸다. 명단을 다시 보내 달라고 요청한다(6초에 한 번).
+            try:
+                if (not self._mafia_is_host() and not getattr(self, "mafia_active", False)
+                        and getattr(self, "_recruiter_host", None) and getattr(self, "_in_game", True)
+                        and getattr(self, "_my_joined", False)
+                        and time.time() - getattr(self, "_start_req_ts", 0) > 6):
+                    self._start_req_ts = time.time()
+                    self._mafia_send_to_host("role_request", who=getattr(self.engine, "name", None), nostart=True)
+            except Exception as _swallow_e:
+                applog.swallowed(_swallow_e)
         elif t == "leave_game":
             # v1.97 — 클라이언트가 스스로 나감: 접속 끊김과 같은 방식으로 사망 처리하고 방송을 끊는다.
             nm = ev.get("name")
             p = self.core.players.get(nm) if self._mafia_is_host() and self.mafia_active else None
-            if p is not None and not p.get("is_ai"):
+            left = getattr(self, "_mafia_left", None)
+            if left is None:
+                left = self._mafia_left = set()
+            if p is not None and not p.get("is_ai") and nm not in left:
                 known = getattr(self, "_mafia_disconnected", None)
                 if known is None:
                     known = self._mafia_disconnected = set()
                 known.add(nm)
+                left.add(nm)      # v1.100 — 나간 사람은 앱이 켜져 있어 응답이 오므로 '재접속'으로 오판하지 않게 따로 기억한다
                 self.add_mafia_system(f"🚪 {nm}님이 게임에서 나갔습니다.")
                 if p.get("alive", True):
                     p["alive"] = False
@@ -1042,6 +1120,8 @@ class MafiaNetMixin:
                     winner = self.core.check_winner()
                     if winner:
                         self._on_game_end(winner)
+                    else:
+                        self._host_after_removal(nm)
         elif t == "death":
             # v1.61 — 접속 끊김 등으로 인한 사망 처리 동기화(호스트가 판정).
             nm = ev.get("name")
@@ -1153,10 +1233,8 @@ class MafiaNetMixin:
                 # 함정), 그 분기를 안 타는 이번 같은 경로에서 모듈 전역 applog를 그냥 쓰면
                 # UnboundLocalError가 난다 — 여기서도 지역으로 다시 import한다.
                 try:
-                    import applog
                     applog.log("mafia_lobby_chat_dropped", detail=f"from={sender} (mafia_active=True)")
                 except Exception as _swallow_e:
-                    import applog
                     applog.swallowed(_swallow_e)
                 return True
             if sender != me and msg_text:
@@ -1212,7 +1290,7 @@ class MafiaNetMixin:
             # 다시 살아났는지 알 길도 없었다. 클라이언트도 이걸로 방장이 살아 있음을 안다.
             try:
                 for _n, _p in list(self.core.players.items()):
-                    if not _p.get("is_ai") and _n != me:
+                    if not _p.get("is_ai") and _n != me and _n not in (getattr(self, "_mafia_left", None) or ()):
                         self._mafia_send_private(_n, "hb")
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
@@ -1221,7 +1299,7 @@ class MafiaNetMixin:
             ident = self._ident()
             now = time.time()
             for name, p in list(self.core.players.items()):
-                if p.get("is_ai") or name == me:
+                if p.get("is_ai") or name == me or name in (getattr(self, "_mafia_left", None) or ()):
                     continue
                 bound = ident.get(name)
                 online = False
@@ -1263,6 +1341,7 @@ class MafiaNetMixin:
                         if winner:
                             self._on_game_end(winner)
                             return
+                        self._host_after_removal(name)
                 elif online and was_disconnected:
                     # v1.90 — 이 분기가 진짜 "재접속" 순간이다. v1.87에서 연속 확인 로직을
                     # 넣으며 실수로 안내 문구를 아래 'elif online:'(매 폴링마다 참인 정상
@@ -1296,6 +1375,27 @@ class MafiaNetMixin:
                 except Exception as _swallow_e:
                     applog.swallowed(_swallow_e)
                 setattr(self, attr, None)
+
+    def _host_after_removal(self, name):
+        """v1.100 — 참가자가 나가거나 끊겨 사망 처리된 뒤 진행 중인 단계를 다시 판단한다. 예전에는 승패만
+        다시 봐서, 그 사람 표만 남은 투표가 시한까지 기다리거나 죽은 피고인의 재판이 그대로 진행돼
+        '처형 확정 + 직업 공개'가 나왔다."""
+        try:
+            if not self._mafia_is_host() or not self.mafia_active:
+                return
+            defendant = getattr(self.core, "defendant", None)
+            if defendant:
+                if defendant == name:
+                    self._clear_defense_deadline()
+                    self.root.after(300, lambda: self._resolve_defense(name))
+                else:
+                    self._maybe_resolve_defense(defendant)
+            elif getattr(self, "_revote_tied", None) and not getattr(self, "_revote_tally_scheduled", True):
+                self._check_revote_done()
+            elif getattr(self, "_vote_window", False) and self.core.all_voted():
+                self._schedule_tally(300)
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
 
     def _host_receive_vote_cast(self, voter, target):
         """v1.61 — 호스트 전용: 원격 참가자가 보낸 낮 투표(vote_cast)를 실제

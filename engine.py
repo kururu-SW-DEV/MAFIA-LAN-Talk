@@ -80,6 +80,7 @@ class Engine:
         self._reliable_lock = threading.Lock()
         self._probing = set()           # 지금 ping 중인 상대
         self._probe_next = {}           # 상대 -> 다음 ping 가능 시각
+        self._probe_fail = {}           # 상대 -> 연속 ping 실패 횟수(간격을 늘리는 데 쓴다)
         self._flush_backoff = {}        # outbox 대상 -> 이 시각까지는 재시도 안 함
         self._pending_peer = {}         # msg_id -> (ip, port) — ack가 누구에게서 왔는지(생존 신호로 쓴다)
         self.log_lock = threading.Lock()
@@ -1200,11 +1201,12 @@ class Engine:
         now = time.time()
         with self.plock:
             stale = [k for k, v in self.peers.items()
-                     if now - v.get("last", 0) >= PEER_TIMEOUT and k not in self._probing
+                     if now - v.get("last", 0) >= PEER_TIMEOUT - 2 * PRESENCE_INTERVAL and k not in self._probing
                      and now >= self._probe_next.get(k, 0)]
         for key in stale[:8]:
             self._probing.add(key)
-            self._probe_next[key] = now + 9
+            # v1.100 — 계속 실패하는(꺼진) 상대는 9초→15초→30초로 간격을 늘려 스레드·패킷 낭비를 줄인다
+            self._probe_next[key] = now + (9, 15, 30)[min(self._probe_fail.get(key, 0), 2)]
             threading.Thread(target=self._probe_one, args=(key,), daemon=True).start()
 
     def _probe_one(self, key):
@@ -1213,7 +1215,11 @@ class Engine:
             pkt = {"type": "ping", "id": uuid.uuid4().hex, "tid": self.instance_id,
                    "name": self.name, "port": self.port}
             if self._send_reliable_wait(pkt, ip, port):
+                self._probe_fail.pop(key, None)
+                self._probe_next[key] = time.time() + 9
                 self._emit({"ev": "peer"})       # 목록·상태 표시 갱신
+            else:
+                self._probe_fail[key] = self._probe_fail.get(key, 0) + 1
         except Exception as _e:
             applog.swallowed(_e)
         finally:
@@ -1400,7 +1406,8 @@ class Engine:
                         # v1.95 — 이 상대가 12초간 조용해 _prune에 지워진 뒤(presence가 안 오는 구성에서는
                         # 흔하다)에도, 내가 보낸 패킷의 ack는 오고 있다 — 항목을 다시 만들어 살아 있음으로
                         # 본다. 안 그러면 한 번 조용해진 사람은 영영 재접속으로 인식되지 않았다.
-                        self.peers[target] = {"name": target[0], "ip": target[0], "port": target[1],
+                        self.peers[target] = {"name": self.get_known_name(("dm", target[0], target[1])) or target[0],
+                                              "ip": target[0], "port": target[1],
                                               "last": time.time(), "static": False}
             return
 

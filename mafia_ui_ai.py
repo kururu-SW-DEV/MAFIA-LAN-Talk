@@ -164,6 +164,11 @@ class MafiaAIChatMixin:
         사람의 말을 듣고 둘은 서로 벙어리였다. 클라이언트는 방장에게만 보내고, 방장이 나머지
         참가자에게 중계한다(방장은 원래 모두와 연결돼 있고 명단·신원 묶음을 권위 있게 갖고 있다).
         호스트 자신의 발언은 예전처럼 직접 방송한다."""
+        if len(text) > 2000:
+            # v1.100 — 엔진이 [MAFIA1] JSON 전체를 3000자에서 잘라 보내면 받는 쪽 decode가 실패해 긴 발언이 조용히
+            # 사라졌다(내 화면에만 보임). 넉넉히 2000자까지만 보낸다.
+            text = text[:2000]
+            self.add_mafia_system("⚠ 발언이 너무 길어 2000자까지만 전달됩니다.", local=True)
         if self._mafia_is_host():
             self._mafia_broadcast("user_say", name=me, text=text)
         else:

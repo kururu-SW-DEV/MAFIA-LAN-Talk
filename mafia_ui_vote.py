@@ -1215,6 +1215,19 @@ class MafiaVoteMixin:
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
             self._defense_popup10 = None
+        if not (self.core.players.get(name) or {}).get("alive", True):
+            # v1.100 — 피고인이 변론 도중 나가거나 접속이 끊겨 이미 사망 처리됐다: 처형·직업 공개 없이 재판을 무효로 한다.
+            self.core.defendant = None
+            self.core.defense_yes = {}
+            self.add_mafia_system(f"⚖ 피고인 '{name}' 님이 자리를 떠나 재판이 무효가 되었습니다.")
+            self._show_verdict_visuals("void", name, None, 0, 0)
+            self._mafia_broadcast("verdict", result="void", name=name, role=None, yes=0, no=0)
+            winner = self.core.check_winner()
+            if winner:
+                self._on_game_end(winner)
+                return
+            self.root.after(int(VOTE_REVEAL_DELAY * 1000), self._enter_night_sequence)
+            return
         result, yes, no = self.core.execute_defense(name)
         self._sync_ai_alive()   # v1.11 — 최후변론 처형 시 AI 발화 차단
         role2 = self.core.reveal_role(name)

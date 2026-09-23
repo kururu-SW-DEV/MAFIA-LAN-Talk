@@ -160,7 +160,7 @@ try:
     appA._mafia_send_private = _orig_priv
     n_before = len(stubB.mafia_history)
     stubB.core.phase = Phase.NIGHT
-    stubB._ack_pending = {"vote_cast": ({"voter": b_nm, "target": "x"}, 1)}
+    stubB._ack_pending = {"vote_cast": ({"voter": b_nm, "target": "x"}, 1, 1)}
     stubB._check_host_ack("vote_cast")
     check("이미 밤으로 넘어갔으면 '접수 확인 없음' 경고를 띄우지 않음",
           not any("접수했다는 확인이 없습니다" in (r.get("text") or "") for r in stubB.mafia_history[n_before:]))

@@ -330,8 +330,9 @@ _ga = _GateStub()
 check("마피아 비밀 대화: 방장이 중계하는 AI 발언은 통과, 남이 AI 이름을 사칭하면 차단",
       _ga._proto_authorized("mafia_say", {"name": "미나"}, "김재무A")
       and not _ga._proto_authorized("mafia_say", {"name": "미나"}, "해커"))
-check("마피아 비밀 대화: 사람 동료가 자기 이름으로 보내면 통과",
-      _ga._proto_authorized("mafia_say", {"name": "동료"}, "동료"))
+check("마피아 비밀 대화: 사람 동료의 말은 방장 중계로만 받는다(v1.100 — 직접 온 것은 차단)",
+      _ga._proto_authorized("mafia_say", {"name": "동료"}, "김재무A")
+      and not _ga._proto_authorized("mafia_say", {"name": "동료"}, "동료"))
 
 check("모집 시작: 본인을 방장으로 알리는 사람만 통과(남을 방장으로 지목하면 차단)",
       _GateStub(host=None, active=False)._proto_authorized("recruit_start", {"host": "김재무A"}, "김재무A")

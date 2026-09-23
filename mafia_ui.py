@@ -454,6 +454,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             return
 
         self._mafia_disconnected = set()   # v1.42 — 새 판 시작, 접속 상태 추적 초기화
+        self._mafia_left = set()
         self._mafia_disconnect_strikes = {}  # v1.87 — 연속 누락 횟수도 새 판마다 초기화
         self._mafia_start_disconnect_watch()
         # v1.90 — 생존자 현황 줄과 [🛑 게임 강제 종료] 버튼은 지금까지 _select_mafia_room

@@ -524,6 +524,8 @@ class MafiaViewMixin:
     def _show_verdict_visuals(self, result, name, role2, yes, no):
         """찬반 투표 결과 확정 시 유죄 처형 vs 무죄 방면 시네마틱 컷신."""
         self._unlock_defense_entry()
+        if result == "void":
+            return          # v1.100 — 피고인이 자리를 떠나 무효가 된 재판은 연출 없이 넘어간다
         if result == "executed":
             self._mafia_show_splash(
                 title="[유죄 확정] 단두대 처형 집행",
