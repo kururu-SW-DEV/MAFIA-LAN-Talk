@@ -78,6 +78,8 @@ class Engine:
         self._reliable_queues = {}      # (ip,port) -> queue.Queue
         self._reliable_workers = {}     # (ip,port) -> Thread(살아있으면)
         self._reliable_lock = threading.Lock()
+        self._probing = set()           # 지금 ping 중인 상대
+        self._probe_next = {}           # 상대 -> 다음 ping 가능 시각
         self._flush_backoff = {}        # outbox 대상 -> 이 시각까지는 재시도 안 함
         self._pending_peer = {}         # msg_id -> (ip, port) — ack가 누구에게서 왔는지(생존 신호로 쓴다)
         self.log_lock = threading.Lock()
@@ -1185,8 +1187,37 @@ class Engine:
                 statics = [k for k, v in self.peers.items() if v.get("static")]
             for (ip, port) in statics:
                 self._send_dict(pkt, ip, port)
+            self._probe_stale_peers()
             self._prune()
             self._stop.wait(PRESENCE_INTERVAL)
+
+    def _probe_stale_peers(self):
+        """v1.95 — 응답 확인(ping). 친구로 등록됐거나 대화 기록이 있어 목록에 올라온 상대(last=0/오래됨)는
+        상대의 presence가 내게 와야만 "접속 중"으로 바뀌었다. 인터넷·NAT을 사이에 둔 상대는 내가 보내는
+        방향만 열려 있어 presence가 안 오므로, 프로그램을 처음 켜면 실제로 접속 중이어도 "대기"로 뜨고
+        테스트 메시지를 한 번 보내야(그 ack로) 접속 중이 됐다 — 마피아 초대도 그 뒤에야 가능했다.
+        오래 조용한 상대에게 작은 ping을 보내 ack가 오면 접속 중으로 표시한다(ack 처리가 last를 갱신)."""
+        now = time.time()
+        with self.plock:
+            stale = [k for k, v in self.peers.items()
+                     if now - v.get("last", 0) >= PEER_TIMEOUT and k not in self._probing
+                     and now >= self._probe_next.get(k, 0)]
+        for key in stale[:8]:
+            self._probing.add(key)
+            self._probe_next[key] = now + 9
+            threading.Thread(target=self._probe_one, args=(key,), daemon=True).start()
+
+    def _probe_one(self, key):
+        ip, port = key
+        try:
+            pkt = {"type": "ping", "id": uuid.uuid4().hex, "tid": self.instance_id,
+                   "name": self.name, "port": self.port}
+            if self._send_reliable_wait(pkt, ip, port):
+                self._emit({"ev": "peer"})       # 목록·상태 표시 갱신
+        except Exception as _e:
+            applog.swallowed(_e)
+        finally:
+            self._probing.discard(key)
 
     def get_group(self, gid):
         """스레드 안전한 그룹 정보 조회(복사본 반환)."""
@@ -1367,6 +1398,16 @@ class Engine:
             return
 
         if d.get("tid") == self.instance_id:      # 내가 보낸 것의 루프백
+            return
+
+        if dtype == "ping":
+            # v1.95 — 응답 확인 요청: ack로 답하고, 나를 찾아온 상대이니 목록에 올려 둔다
+            self._send_dict({"type": "ack", "id": str(d.get("id") or ""), "tid": self.instance_id}, ip, addr[1])
+            try:
+                pport = int(d.get("port") or DEFAULT_PORT)
+                self._upsert_peer(ip, pport, str(d.get("name") or "?")[:60])
+            except (TypeError, ValueError):
+                pass
             return
 
         if dtype == "presence":

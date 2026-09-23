@@ -23,5 +23,11 @@ ea.send_message(key[0],key[1],"안녕")
 end=time.time()+5
 while time.time()<end and ea.peers[key]["last"]==0: time.sleep(0.05)
 check("presence 없이도 ack만으로 상대의 last가 갱신됨", ea.peers[key]["last"]>0)
+# v1.95 — 메시지를 보내지 않아도 ping 응답으로 "접속 중"이 됨(프로그램을 막 켠 직후 상황)
+with ea.plock:
+    ea.peers[key]["last"]=0
+end=time.time()+15
+while time.time()<end and ea.peers.get(key,{}).get("last",0)==0: time.sleep(0.1)
+check("메시지 없이도 ping 응답으로 접속 중 표시", ea.peers.get(key,{}).get("last",0)>0)
 ea.stop(); eb.stop(); shutil.rmtree(tmp,ignore_errors=True)
 print("ACK LIVENESS","PASSED" if ok else "FAILED"); sys.exit(0 if ok else 1)
