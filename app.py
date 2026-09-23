@@ -2446,11 +2446,10 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
         # 마피아 게임 프로토콜 메시지는 일반 채팅에 표출하지 않고 게임방으로 전달
         txt0 = ev.get("text") or ""
         if txt0.startswith("[MAFIA1]"):
+            # v1.92 — 게임 패킷에는 읽음 확인을 보내지 않는다. 이 패킷은 대화 로그에 남지도 않는데,
+            # 읽음 확인 한 통마다 양쪽이 그 상대와의 전체 DM 로그를 읽고 복호화하며(log_lock을
+            # 잡고), 상대 화면이 그 DM이면 채팅 전체를 다시 그렸다 — 투표 중엔 초당 수 회.
             self._on_mafia_proto_msg(txt0, name, ev.get("peer"))
-            try:
-                self.engine.send_read_ack(ev["peer"][0], ev["peer"][1], mid=ev.get("mid", ""))
-            except Exception:
-                pass
             return
         sticker_id = ev.get("sticker_id")
         if key in self.engine.hidden:
@@ -2779,6 +2778,14 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
             try:
                 ctypes.windll.user32.UnhookWindowsHookEx(self._dnd_hook)
                 self._dnd_hook = None
+            except Exception:
+                pass
+        # v1.92 — 방장이 게임 도중 프로그램을 끄면 참가자들은 종료 통보를 못 받아 "게임 진행 중"에
+        # 영영 갇혔다(끊김 감시는 방장만 돌린다). 엔진을 멈추기 전에 강제 종료를 알린다.
+        if self.engine is not None and getattr(self, "mafia_active", False) and getattr(self, "mafia_host_mode", False):
+            try:
+                self._mafia_broadcast("force_end")
+                time.sleep(0.4)      # 전송 스레드가 첫 시도를 내보낼 시간
             except Exception:
                 pass
         if self.engine is not None:

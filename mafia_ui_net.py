@@ -32,9 +32,10 @@ class MafiaNetMixin:
             if self.mafia_active and core is not None:
                 me = getattr(eng, "name", None)
                 targets = set()
+                gone = getattr(self, "_mafia_disconnected", None) or ()
                 for n, p in list(core.players.items()):
-                    if p.get("is_ai") or n == me:
-                        continue
+                    if p.get("is_ai") or n == me or n in gone:
+                        continue      # v1.92 — 끊긴 사람에게는 보내지 않는다(큐만 쌓이고 돌아오면 한꺼번에 재생됨)
                     ip_port = self._mafia_peer_of(n)
                     if ip_port:
                         targets.add(ip_port)
@@ -494,6 +495,11 @@ class MafiaNetMixin:
                 if not self._claim_matches(claimed, sender_name, peer):
                     return False                  # 본인을 방장으로 알리지 않은 패킷은 묶음도 건드리지 않는다
                 active = getattr(self, "mafia_active", False)
+                if active and host and claimed != host:
+                    # v1.92 — 진행 중인 판에서 다른 사람이 모집을 열면 조용히 무시한다. 예전에는 아래
+                    # _sender_is(host)가 실패하며 전 참가자에게 "방장 이름을 사칭한 요청"이라는 거짓
+                    # 경고가 떴다(실제 방장은 아무 잘못이 없는데).
+                    return False
                 if not active:
                     self._reset_ident()           # 검증을 통과한 새 모집 — 이전 판의 묶음을 버린다
                 if not self._sender_is(claimed, sender_name, peer):
@@ -570,6 +576,16 @@ class MafiaNetMixin:
             self._vote_window = False
         if t in ("verdict", "night", "day", "end") and not self._mafia_is_host():
             self._clear_client_defense()
+        if t in ("defense_start", "verdict", "night", "day", "end", "force_end") and not self._mafia_is_host():
+            # v1.92 — 클라이언트가 재투표 팝업을 열며 건 25·30초 기한이 단계가 바뀌어도 안 지워져,
+            # 뒤늦게 터져 그때 열려 있던 밤 행동 패널·유령방 등을 엉뚱하게 닫았다.
+            dl = getattr(self, "_revote_deadline", None)
+            if dl:
+                try:
+                    self.root.after_cancel(dl)
+                except Exception as _swallow_e:
+                    applog.swallowed(_swallow_e)
+                self._revote_deadline = None
         if t != "recruit_start" and t in self._HOST_ONLY_EVENTS:
             self._mafia_last_host_ts = time.time()      # 방장이 살아 있다는 표시
         # 참가 신청하지 않은 사람에게는 게임 진행 화면(시작·밤 연출·투표 팝업)을 띄우지 않는다.
@@ -714,6 +730,8 @@ class MafiaNetMixin:
                 roster = ev.get("players")
                 roster = roster if isinstance(roster, (list, tuple)) else []
                 with self.core.lock:
+                    if self.core.phase != Phase.LOBBY:
+                        self.core.lobby_reset()     # v1.92 — 지난 판 상태가 남아 있으면(end 유실 등) 비우고 새로 받는다
                     if self.core.phase == Phase.LOBBY:
                         for entry in roster:
                             if isinstance(entry, dict):
@@ -892,6 +910,10 @@ class MafiaNetMixin:
         elif t == "recruit_start":
             host = ev.get("host")
             host = host if isinstance(host, str) and host else "방장"
+            # v1.92 — 검증을 통과한(진행 중인 판의 방장이 낸) 새 모집 알림은 "지난 판이 끝났다"는
+            # 뜻이다. end/force_end 패킷이 유실돼도(3.6초 재시도 후 포기) 여기서 스스로 로비로 복귀한다.
+            if getattr(self, "mafia_active", False) and not self._mafia_is_host():
+                self._client_reset_to_lobby()
             self._recruiting = True
             self._recruiter_host = host
             self._recruited_humans = self._name_list(ev.get("players"))

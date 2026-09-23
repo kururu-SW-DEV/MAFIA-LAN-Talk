@@ -88,7 +88,9 @@ class MafiaAIChatMixin:
                 return
             if m and my_role == "police":
                 t = m.group(1).strip()
-                if t in self.core.alive_players() and t != me:
+                if self.core.invest_night == self.core.day_no:
+                    self.add_mafia_host_dm("⚠ 오늘 밤은 이미 조사했습니다 — 조사는 밤마다 한 명만 할 수 있습니다")
+                elif t in self.core.alive_players() and t != me:
                     res = self.core.police_investigate(t)
                     if res == "mafia":
                         self.add_mafia_host_dm(f"🕵 [조사 결과 — 나에게만] {t}님은 마피아입니다!")
@@ -106,11 +108,11 @@ class MafiaAIChatMixin:
                 self.ai.observe_all(self.engine.name, text)
             # 마피아/의사/경찰 역할자가 아직 신청 안 했으면 안내
             if my_role == "mafia" and me not in self.core.night_targets and not self.core.night_target:
-                self.add_mafia_system("(안내) 마피아는 '살해 이름'으로 밤 행동을 알려야 합니다.")
+                self.add_mafia_system("(안내) 마피아는 '살해 이름'으로 밤 행동을 알려야 합니다.", local=True)
             elif my_role == "doctor" and not self.core.night_saved:
-                self.add_mafia_system("(안내) 의사는 '구조 이름'으로 밤 행동을 알려야 합니다.")
+                self.add_mafia_system("(안내) 의사는 '구조 이름'으로 밤 행동을 알려야 합니다.", local=True)
             elif my_role == "police" and not self.core.police_report:
-                self.add_mafia_system("(안내) 경찰은 '조사 이름'으로 밤 행동을 알려야 합니다.")
+                self.add_mafia_system("(안내) 경찰은 '조사 이름'으로 밤 행동을 알려야 합니다.", local=True)
             return
         if self.core.phase == Phase.DAY:
             # '@이름'만 친 것은 멘션(AI 호출)이지 투표가 아니다 — 투표는 '투표 이름'으로만
@@ -140,7 +142,7 @@ class MafiaAIChatMixin:
                     except Exception as _swallow_e:
                         applog.swallowed(_swallow_e)
                 else:
-                    self.add_mafia_system(f"투표 불가 — '{target}'은(는) 생존 참가자가 아닙니다.")
+                    self.add_mafia_system(f"투표 불가 — '{target}'은(는) 생존 참가자가 아닙니다.", local=True)
                 if self.core.all_voted():
                     self.add_mafia_host("전원이 투표했습니다. 개표하겠습니다.")
                     self._schedule_tally(300)

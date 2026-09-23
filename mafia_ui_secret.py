@@ -423,6 +423,8 @@ class MafiaSecretMixin:
         # 곳이 어디에도 없어서 다음 판 첫 재투표 때 그 명단 밖 사람에게 온 표를 전부 버렸다.
         self._revote_tied = []
         self._revote_tally_scheduled = True
+        self._ghost_alone_told = set()
+        self._revote_used = False      # v1.92 — 재투표 도중 끝난 판의 값이 다음 판 첫 동률을 무효로 만들었다
 
     def _ghost_roster_text(self):
         """유령방 상단 현황: 생존/사망 인원과 사망자(유령)의 직업."""
@@ -675,7 +677,11 @@ class MafiaSecretMixin:
                if not pl.alive and getattr(pl, "booted", False)]
         if not ais:
             if remote:
-                self._mafia_send_private(me, "ghost_say", name="안내", text=self._NO_GHOST_PARTNER)
+                # v1.92 — 원격 사망자에게는 메시지를 칠 때마다 이 안내가 왔다. 판마다 한 번만.
+                told = self.__dict__.setdefault("_ghost_alone_told", set())
+                if me not in told:
+                    told.add(me)
+                    self._mafia_send_private(me, "ghost_say", name="안내", text=self._NO_GHOST_PARTNER)
             elif not getattr(self, "_ghost_alone_noted", False):
                 self._ghost_alone_noted = True
                 self._append_ghost(self._NO_GHOST_PARTNER)

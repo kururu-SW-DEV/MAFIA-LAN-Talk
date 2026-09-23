@@ -62,6 +62,7 @@ class GameCore:
         # --- 문서 기획 보강(2026-09-17): 기존 동작 유지, 없는 것만 추가 ---
         self.police_invest = {}         # 경찰 조사 이력: target -> "mafia"|"citizen"
         self.police_report = None       # 직전 밤 경찰 조사 결과 (target, result)
+        self.invest_night = None        # 경찰이 마지막으로 조사한 밤(day_no) — 밤마다 1명만
         self.last_protect = None        # 의사 직전 밤 보호 대상(연속 보호 금지 판정)
         self.night_targets = {}         # 밤 다수 마피아 개별 지목: mafia_name -> target
         self.abstains = set()           # 기권(투표 타임아웃)자
@@ -220,6 +221,9 @@ class GameCore:
                 return None
             if not target or target == me or not self.players.get(target, {}).get("alive"):
                 return None
+            if self.invest_night == self.day_no:
+                return None        # v1.92 — 한 밤에 한 명만(채팅 명령으로 계속 조사하던 구멍)
+            self.invest_night = self.day_no
             role = self.players.get(target, {}).get("role")
             if target in self.police_invest:
                 result = self.police_invest[target]          # 중복 조사 방지

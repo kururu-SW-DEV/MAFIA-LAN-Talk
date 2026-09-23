@@ -368,11 +368,15 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
                     self.add_mafia_system("참가 신청 상태가 아닙니다. 참가하려면 '/참가'를 입력하세요.")
 
     @staticmethod
-    def _pick_ai_personas(need):
+    def _pick_ai_personas(need, exclude=()):
         """AI 참가자 인격을 인격 풀(ALL_PERSONAS)에서 무작위로 need명 뽑는다(중복 없음).
-        예전에는 항상 앞에서부터 순서대로 써서 매판 똑같은 캐스팅(루카·미나·제이…)이었다."""
-        need = max(0, min(int(need), len(ALL_PERSONAS)))
-        return random_mod.sample(list(ALL_PERSONAS), need)
+        예전에는 항상 앞에서부터 순서대로 써서 매판 똑같은 캐스팅(루카·미나·제이…)이었다.
+        v1.92 — exclude(사람 참가자 이름)와 겹치는 인격은 뺀다. 사람 이름이 "미나"면 AI "미나"가
+        core.join에서 조용히 거부되는데도 에이전트는 그대로 만들어져, 그 사람 이름으로 투표·밤
+        행동을 하는 AI가 생겼다."""
+        pool = [p for p in ALL_PERSONAS if p["name"] not in set(exclude)]
+        need = max(0, min(int(need), len(pool)))
+        return random_mod.sample(pool, need)
 
     def _launch_game_with_recruits(self):
         me = getattr(self.engine, "name", None) or "나"
@@ -404,7 +408,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             ai_count = max(1, getattr(self, "mafia_ai_count", 4))
             need = max(ai_count, MIN_PLAYERS - len(self.core.players))
             need = min(need, len(ALL_PERSONAS), MAX_PLAYERS - len(humans))   # 총원 최대 10명
-            chosen_personas = self._pick_ai_personas(need)
+            chosen_personas = self._pick_ai_personas(need, exclude=set(self.core.players))
             self._session_ai_personas = chosen_personas
             for p in chosen_personas:
                 self.core.join(p["name"], is_ai=True)
@@ -488,6 +492,10 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         need = max(1, getattr(self, "mafia_ai_count", 4))
         ai_names = [n for n, p in self.core.players.items() if p.get("is_ai")]
         personas_to_spawn = getattr(self, "_session_ai_personas", None) or ALL_PERSONAS[:len(ai_names)]
+        # v1.92 — 실제로 core에 들어간 AI 이름과 인격 목록을 이름으로 맞춘다(한 명이 빠져도 밀리지 않게)
+        by_name = {p["name"]: p for p in personas_to_spawn}
+        if all(n in by_name for n in ai_names):
+            personas_to_spawn = [by_name[n] for n in ai_names]
         oks = self.ai.spawn_all(personas_to_spawn, self.engine.name,
                                 players_desc, names=ai_names)
         # AI 스폰 완료 후 core의 역할 정보를 AI 객체들에게 배정!
@@ -495,7 +503,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         fail = [n for n, ok in oks if not ok]
         if fail:
             self.root.after(0, lambda: self.add_mafia_system(
-                f"⚠ AI 부트 실패: {', '.join(fail)} — 해당 AI는 관전만 합니다."))
+                f"⚠ AI 부트 실패: {', '.join(fail)} — 해당 AI는 말은 못 하지만 표결·밤 행동은 무작위로 진행합니다."))
 
     def _host_opening_now(self):
         text = host_llm_cached(

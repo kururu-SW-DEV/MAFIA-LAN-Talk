@@ -457,7 +457,7 @@ class MafiaViewMixin:
             self._defense_entry_locked = False
             if hasattr(self, "status"):
                 self.status.set("🎙 [당신은 피고인입니다!] 목숨을 걸고 결백을 증명하세요 (60초)")
-            self.add_mafia_system("🔥 [경고 - 당신은 피고인입니다] 지금 채팅으로 결백을 증명하지 못하면 처형당합니다! (60초)")
+            self.add_mafia_system("🔥 [경고 - 당신은 피고인입니다] 지금 채팅으로 결백을 증명하지 못하면 처형당합니다! (60초)", local=True)
         else:
             self._defense_entry_locked = True
             if hasattr(self, "entry"):
@@ -806,6 +806,18 @@ class MafiaViewMixin:
         if not getattr(self, "mafia_active", False):
             self._refresh_mafia_roster()
             return
+        # v1.92 — 방장이 종료 통보 없이 사라진 경우(크래시·전원 차단)를 참가자가 스스로 알아챈다.
+        try:
+            if not self._mafia_is_host():
+                host = getattr(self, "_recruiter_host", None)
+                last = getattr(self, "_mafia_last_host_ts", None)
+                if (host and last and time.time() - last > 60 and self._mafia_peer_raw(host) is None):
+                    self.add_mafia_system("⚠ 방장과의 연결이 끊겨 게임을 종료하고 로비로 돌아갑니다.")
+                    self._client_reset_to_lobby()
+                    self._refresh_mafia_roster()
+                    return
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
         self._refresh_mafia_roster()
         self._roster_tick_id = self.root.after(2000, self._mafia_roster_tick)
 
@@ -867,7 +879,16 @@ class MafiaViewMixin:
             if self.current == ("mgame",):
                 return
             self.unread[("mgame",)] = self.unread.get(("mgame",), 0) + 1
-            self._refresh_list()
+            # v1.92 — 투표 한 번에 시스템 줄이 15~25개 쏟아지는데 그때마다 사이드바 전체를 다시
+            # 만들었다. 0.3초 안에 여러 번 불려도 한 번만 갱신한다.
+            if not getattr(self, "_mgame_list_refresh_job", None):
+                def _do():
+                    self._mgame_list_refresh_job = None
+                    try:
+                        self._refresh_list()
+                    except Exception as _e:
+                        applog.swallowed(_e)
+                self._mgame_list_refresh_job = self.root.after(300, _do)
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
 
@@ -886,7 +907,10 @@ class MafiaViewMixin:
         elif not mine:
             self._mafia_mark_unread()
 
-    def add_mafia_system(self, text):
+    def add_mafia_system(self, text, local=False):
+        """local=True면 이 PC 화면에만 남기고 다른 참가자에게 방송하지 않는다 — v1.92: 방장 시점의
+        안내("당신은 피고인입니다", "당신의 표만 기다립니다", "(안내) 마피아는 …" 등)가 그대로
+        전원에게 가서 원격 참가자를 헷갈리게 하고, 방장의 직업까지 새어 나갔다."""
         # 랜톡 chat_renderer._draw_record와 호환: is_system=True면 시스템 구분선으로 그려짐
         rec = {"kind": "system", "is_system": True, "ts": time.time(), "text": text}
         self._mafia_history_append(rec)
@@ -895,7 +919,7 @@ class MafiaViewMixin:
             self._mafia_append_live(rec)
         else:
             self._mafia_mark_unread()
-        if getattr(self, "mafia_host_mode", False) and self.mafia_active:
+        if not local and getattr(self, "mafia_host_mode", False) and self.mafia_active:
             self._mafia_broadcast("sys", text=text)
         self._ai_observe_system(text)
 

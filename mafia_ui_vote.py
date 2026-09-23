@@ -152,12 +152,12 @@ class MafiaVoteMixin:
         # v1.13/v1.34 — 사망자는 투표 팝업 자체가 열리지 않게(유령방 안내로 대체), AI 투표는 정상 진행
         me_check = getattr(self.engine, "name", None)
         if me_check and not (self.core.players.get(me_check) or {}).get("alive", True):
-            self.add_mafia_system("👻 사망자는 투표할 수 없습니다 — AI 투표 참관 모드로 진행됩니다")
+            self.add_mafia_system("👻 사망자는 투표할 수 없습니다 — AI 투표 참관 모드로 진행됩니다", local=True)
             self._open_ghost_chat()
             # AI 전원 투표 접수 — 사망자 관전 모드에서도 AI끼리 투표 진행
             alive_cands = self.core.alive_players()
             ai_players = [pl for pl in getattr(self, "ai", None) and self.ai.players or []
-                          if pl.alive and pl.booted and pl.name in alive_cands]
+                          if pl.alive and pl.name in alive_cands]
             for idx, ai in enumerate(ai_players):
                 self.root.after(300 + idx * 350, lambda a=ai: self._ai_vote_in_popup(a))
             self._force_tally_timer = self.root.after(15000, self._silent_tally_if_pending)
@@ -208,7 +208,7 @@ class MafiaVoteMixin:
         self._vote_popup_tick()
         # AI 전원 실측 투표 — LLM으로 '투표 이름' 물어 core에 반영, 팝업에 태그 표시
         ai_players = [pl for pl in getattr(self, "ai", None) and self.ai.players or []
-                      if pl.alive and pl.booted and pl.name in alive]
+                      if pl.alive and pl.name in alive]   # v1.92 — booted는 말하기에만 필요(표결은 LLM 없이도 무작위로 진행)
         for idx, ai in enumerate(ai_players):
             # v1.15 — AI 표 접수 대기 단축(1.5초 → 첫 AI 300ms, 이후 350ms 간격)
             self.root.after(300 + idx * 350, lambda ai=ai: self._ai_vote_in_popup(ai))
@@ -296,6 +296,13 @@ class MafiaVoteMixin:
         tokens = getattr(self, "_ai_vote_fallback_tokens", None)
         if tokens is None:
             tokens = self._ai_vote_fallback_tokens = {}
+        # v1.92 — 이미 LLM 답을 기다리는 AI를 또 부르면(유저가 먼저 투표하면 미투 AI를 전부 다시
+        # 부른다) 새 워커의 say()는 busy라 즉시 None → 무작위 표가 진짜 답보다 먼저 들어갔다.
+        # 12초(=대체 타이머 11초 + 여유) 안에 이미 진행 중이면 그냥 기다린다.
+        pend = self.__dict__.setdefault("_ai_vote_pending", {})
+        if time.time() - pend.get(ag.name, 0) < 12:
+            return
+        pend[ag.name] = time.time()
         my_token = tokens[ag.name] = tokens.get(ag.name, 0) + 1
 
         def _bg_vote_worker():
@@ -391,6 +398,7 @@ class MafiaVoteMixin:
         정상 경로·시한 대체 경로 양쪽이 공유). 이미 투표했으면 아무 것도 하지 않는다."""
         if ag.name in self.core.votes:
             return
+        self.__dict__.setdefault("_ai_vote_pending", {}).pop(ag.name, None)
         # 반영 (core) — v1.40: 대상은 비공개, 완료 여부만 알림(익명 개표)
         if target and ag.name in self.core.players:
             # 경찰 AI는 조사로 확인한 마피아가 살아 있으면 대부분 그 사람에게 투표한다(몰표 분산도 적용 안 함).
@@ -441,7 +449,7 @@ class MafiaVoteMixin:
                            and n != getattr(self.core, "defendant", None)]
                 if me_name in pending and not getattr(self, "_user_pending_notified", False):
                     self._user_pending_notified = True
-                    self.add_mafia_system("🗳 AI 투표 완료 — 당신의 표만 기다립니다 (8초 후 자동 개표)")
+                    self.add_mafia_system("🗳 AI 투표 완료 — 당신의 표만 기다립니다 (8초 후 자동 개표)", local=True)
                     self._vote_remaining = min(getattr(self, "_vote_remaining", 15), 8)
                     if getattr(self, "_force_tally_timer", None):
                         try:
@@ -507,7 +515,7 @@ class MafiaVoteMixin:
             return
         if name is None:
             if not (self.core.players.get(me) or {}).get("alive", True):
-                self.add_mafia_system("👻 사망자는 기권할 수 없습니다 — 유령 채팅방에서 수다")
+                self.add_mafia_system("👻 사망자는 기권할 수 없습니다 — 유령 채팅방에서 수다", local=True)
                 self._open_ghost_chat()
                 return
             ok = self.core.cast_abstain(me)
@@ -532,7 +540,7 @@ class MafiaVoteMixin:
                     self._mafia_send_to_host("vote_cast", voter=me, target=None)
         else:
             if not (self.core.players.get(me) or {}).get("alive", True):
-                self.add_mafia_system("👻 사망자는 투표할 수 없습니다 — 유령 채팅방에서 수다")
+                self.add_mafia_system("👻 사망자는 투표할 수 없습니다 — 유령 채팅방에서 수다", local=True)
                 self._open_ghost_chat()
                 return
             ok = self.core.cast_vote(me, name)
@@ -679,7 +687,7 @@ class MafiaVoteMixin:
         # 유령방 자동 오픈이 재투표 팝업을 가리는 것 + 유저 무응답 30초 대기 둘 다 제거
         me_check = getattr(self.engine, "name", None)
         if me_check and not (self.core.players.get(me_check) or {}).get("alive", True):
-            self.add_mafia_system("👻 사망자 재투표 참관 모드 — AI끼리 진행합니다")
+            self.add_mafia_system("👻 사망자 재투표 참관 모드 — AI끼리 진행합니다", local=True)
             # AI 전원 재투표 즉시 접수(기존 팝업 스케줄 유지) + 30초 대기 없음
             for i, pl in enumerate(getattr(self, "ai", None) and self.ai.players or []):
                 if getattr(pl, "alive", False):
@@ -696,7 +704,7 @@ class MafiaVoteMixin:
         # v1.10 — 동률 후보가 '나'뿐이면 선택지 없음 → 즉시 기권+개표(정지 방지)
         me_check = getattr(self.engine, "name", None)
         if [n for n in tied if n != me_check] == []:
-            self.add_mafia_system("🗳 동률 후보가 나뿐 — 유일 대상 제외, 기권 개표로 진행합니다.")
+            self.add_mafia_system("🗳 동률 후보가 나뿐 — 유일 대상 제외, 기권 개표로 진행합니다.", local=True)
             self.root.after(300, self._force_revote_tally)
             return
         # 유저 무응답 대비 — 30초 후 미투자 기권 + 강제 개표(멈춤 원천 차단)
@@ -1121,7 +1129,7 @@ class MafiaVoteMixin:
                 return
             state["n"] -= 1
             if state["n"] <= 0:
-                self.add_mafia_system("⏰ 찬반 투표 시간 초과 — 기권 처리(찬반 어느 쪽으로도 집계되지 않습니다)")
+                self.add_mafia_system("⏰ 찬반 투표 시간 초과 — 기권 처리(찬반 어느 쪽으로도 집계되지 않습니다)", local=True)
                 try:
                     self._mafia_overlay_close()
                 except Exception as _swallow_e:

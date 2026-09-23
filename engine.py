@@ -1988,7 +1988,7 @@ class Engine:
             q = self._reliable_queues.get(key)
             if q is None:
                 q = self._reliable_queues[key] = queue.Queue()
-            q.put((pkt, on_done))
+            q.put((pkt, on_done, time.time()))
             if key not in self._reliable_workers:
                 th = threading.Thread(target=self._reliable_worker, args=(key,), daemon=True)
                 self._reliable_workers[key] = th
@@ -2002,7 +2002,7 @@ class Engine:
         q = self._reliable_queues.get(key)
         while True:
             try:
-                pkt, on_done = q.get(timeout=30)
+                pkt, on_done, queued_at = q.get(timeout=30)
             except queue.Empty:
                 # 큐가 빈 채로 30초가 지났다고 바로 종료하면, 마침 이 순간 다른 스레드가
                 # _send_reliable에서 "워커가 이미 있으니 새로 안 만들어도 된다"고 판단해
@@ -2014,11 +2014,18 @@ class Engine:
                     self._reliable_workers.pop(key, None)
                     self._reliable_queues.pop(key, None)
                     return
-            try:
-                ok = self._send_reliable_wait(pkt, ip, port)
-            except Exception as _e:
-                applog.swallowed(_e)
+            # v1.92 — 응답 없는 상대(접속 끊김 등)에게는 패킷 하나당 3.6초씩 걸려 큐가 계속 쌓이고,
+            # 그 사람이 돌아오면 지난 밤/투표 알림이 한꺼번에 밀려 들어와 화면을 되감았다(v1.87이
+            # outbox에서 막은 것과 같은 문제). 게임 제어 패킷은 10초 넘게 밀리면 버린다.
+            if (time.time() - queued_at > 10 and isinstance(pkt.get("text"), str)
+                    and pkt["text"].startswith("[MAFIA1]")):
                 ok = False
+            else:
+                try:
+                    ok = self._send_reliable_wait(pkt, ip, port)
+                except Exception as _e:
+                    applog.swallowed(_e)
+                    ok = False
             if on_done:
                 try:
                     on_done(ok)

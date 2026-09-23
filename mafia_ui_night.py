@@ -23,7 +23,7 @@ class MafiaNightMixin:
         예전엔 세 역할 모두 random.choice였다(추리 게임의 밤이 전부 난수)."""
         import random as _rr
         mafia_ais = [pl for pl in self.ai.players
-                     if pl.alive and pl.role == "mafia" and pl.booted]
+                     if pl.alive and pl.role == "mafia"]   # v1.92 — booted 불필요
         alive = self.core.alive_players()
         results = {"multi": [], "multi_pairs": []}
         all_mafias = set(self.core.mafias())
@@ -41,9 +41,9 @@ class MafiaNightMixin:
         night_no = self.core.day_no
         self._ensure_night_ai_poll()
         for pl in self.ai.players:
-            if pl.alive and pl.booted and pl.role == "police":
+            if pl.alive and pl.role == "police":
                 self._night_ai_police(pl, night_no)
-            elif pl.alive and pl.booted and pl.role == "doctor":
+            elif pl.alive and pl.role == "doctor":
                 self._night_ai_doctor(pl, night_no)
         if mafia_ais:
             self.root.after(self.NIGHT_MAFIA_LLM_MS, lambda: self._night_ai_mafia(night_no))
@@ -473,6 +473,9 @@ class MafiaNightMixin:
             return False
         if role == "police":
             # --- 보강: 경찰 조사. 결과는 경찰에게만 쪽지로(문서 — 전원 비공개) ---
+            if self.core.invest_night == self.core.day_no:
+                notify("⚠ 오늘 밤은 이미 조사했습니다 — 조사는 밤마다 한 명만 할 수 있습니다")
+                return False
             res = self.core.police_investigate(target)
             if res == "mafia":
                 notify(f"🕵 [조사 결과 — 나에게만 보임] {target}님은 마피아입니다!")
