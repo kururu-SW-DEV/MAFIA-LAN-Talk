@@ -2589,7 +2589,16 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
         try:
             import threading
             import winsound
-            data = _soft_whistle_wav()
+            data = None
+            try:
+                # v1.104 — 번들된 sounds/notify.wav(비브라폰 '띵동')를 쓴다. 없거나 읽지 못하면 예전 합성음으로 대체.
+                from netutils import resource_dir
+                with open(os.path.join(resource_dir(), "sounds", "notify.wav"), "rb") as _f:
+                    data = _f.read()
+            except Exception:
+                data = None
+            if not data:
+                data = _soft_whistle_wav()
 
             def _play():
                 try:

@@ -168,6 +168,7 @@ class MafiaVoteMixin:
         alive = [n for n in self.core.alive_players()
                  if n != getattr(self.engine, "name", None)]   # 자투 방지 — 나는 후보 제외
         body = self._mafia_overlay_open("🗳 투표", w=396, h=None)
+        self._play_mafia_sound("vote_open")
         self._vote_remaining = VOTE_WINDOW   # 15초 카운트다운
         head = tk.Frame(body, bg=C_CARD)
         head.pack(fill="x", padx=18, pady=(12, 4))
@@ -534,6 +535,7 @@ class MafiaVoteMixin:
                         applog.swallowed(_swallow_e)
                 _pd, _pt = self._vote_progress_counts()
                 self.add_mafia_system(f"🗳 {me} 기권 접수 · 진행률 {_pd}/{_pt}")
+                self._play_mafia_sound("vote_cast")
                 self._refresh_vote_progress_label()
                 # v1.61 — 복수 인간 플레이: 내가 호스트면 다른 참가자들에게
                 # 즉시 재동기화, 클라이언트면 호스트에게 실제 반영을 요청.
@@ -559,6 +561,7 @@ class MafiaVoteMixin:
                         applog.swallowed(_swallow_e)
                 _pd, _pt = self._vote_progress_counts()
                 self.add_mafia_system(f"🗳 {me}님 투표 접수 완료 (익명 개표) · 진행률 {_pd}/{_pt}")
+                self._play_mafia_sound("vote_cast")
                 self._refresh_vote_progress_label()
                 # v1.61 — 복수 인간 플레이 동기화(위 기권 분기와 동일한 이유)
                 if self._mafia_is_host():
@@ -685,6 +688,7 @@ class MafiaVoteMixin:
         self._revote_tied = list(tied)
         self._revote_tally_scheduled = False
         self._vote_popup_open_ts = time.time()   # v1.40 — 유저 우선 유예시간 기준점(재투표)
+        self._play_mafia_sound("vote_open")
         # v1.61 — 원격 참가자 화면에도 재투표 팝업이 뜨도록 알린다(이전엔 동률이
         # 나면 원격은 팝업 없이 호스트의 30초 강제 개표까지 기다렸다).
         if self._mafia_is_host():
@@ -817,6 +821,7 @@ class MafiaVoteMixin:
             # v1.47 — 대상 비노출(재투표도 본투표와 동일하게 익명 유지)
             _pd, _pt = self._vote_progress_counts()
             self.add_mafia_system(f"🗳 {me}님 재투표 접수 완료 (익명 개표) · 진행률 {_pd}/{_pt}")
+            self._play_mafia_sound("vote_cast")
             if self._mafia_is_host():
                 self._broadcast_vote_done(me, name)
             else:
@@ -1187,6 +1192,7 @@ class MafiaVoteMixin:
             self.core.cast_defense_vote(me, yes)
         # v1.47 — 찬반 투표도 본투표와 동일하게 완전 익명(누가 찬성/반대인지 비공개).
         self._mafia_overlay_close()
+        self._play_mafia_sound("vote_cast")
         if self._mafia_is_host():
             self.add_mafia_system(f"⚖ {me}님 찬반 표 접수 (익명) · {self._defense_progress_text()}")
             self._broadcast_defense_progress(me)

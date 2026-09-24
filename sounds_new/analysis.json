@@ -1,0 +1,1709 @@
+{
+ "old": {
+  "night": {
+   "name": "night",
+   "duration_s": 1.3,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -1.41,
+   "rms_dbfs": -10.42,
+   "active_rms_dbfs": -10.42,
+   "crest_db": 9.01,
+   "dc_offset": 1e-05,
+   "attack_ms": 60.0,
+   "spk_rms_dbfs": -13.73,
+   "start_click": 0.0003,
+   "end_click": 0.0162,
+   "onset_jump": 0.0003,
+   "first_sample": 0.0,
+   "last_sample": -0.0162,
+   "tail50ms_dbfs": -27.2,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.0,
+   "clipped_samples": 0,
+   "centroid_hz": 175.8,
+   "rolloff85_hz": 170.9,
+   "band_energy_pct": {
+    "<150Hz": 0.0,
+    "150-500": 99.9,
+    "500-2k": 0.0,
+    "2k-5k": 0.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 6,
+   "top_peaks": [
+    [
+     164.2,
+     0.0
+    ],
+    [
+     327.0,
+     -14.0
+    ],
+    [
+     222.1,
+     -14.7
+    ],
+    [
+     201.9,
+     -26.6
+    ],
+    [
+     451.5,
+     -27.0
+    ],
+    [
+     419.2,
+     -29.3
+    ]
+   ]
+  },
+  "day": {
+   "name": "day",
+   "duration_s": 0.58,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -1.41,
+   "rms_dbfs": -10.78,
+   "active_rms_dbfs": -10.78,
+   "crest_db": 9.37,
+   "dc_offset": 1e-05,
+   "attack_ms": 0.0,
+   "spk_rms_dbfs": -10.81,
+   "start_click": 0.0038,
+   "end_click": 0.0001,
+   "onset_jump": 0.0291,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -23.0,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.001,
+   "clipped_samples": 0,
+   "centroid_hz": 823.0,
+   "rolloff85_hz": 1045.7,
+   "band_energy_pct": {
+    "<150Hz": 0.0,
+    "150-500": 0.0,
+    "500-2k": 99.0,
+    "2k-5k": 1.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 12,
+   "top_peaks": [
+    [
+     784.6,
+     0.0
+    ],
+    [
+     659.5,
+     -1.5
+    ],
+    [
+     1047.1,
+     -4.9
+    ],
+    [
+     523.5,
+     -11.6
+    ],
+    [
+     1567.9,
+     -13.8
+    ],
+    [
+     1318.9,
+     -15.5
+    ]
+   ]
+  },
+  "trial": {
+   "name": "trial",
+   "duration_s": 0.35,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -0.92,
+   "rms_dbfs": -17.65,
+   "active_rms_dbfs": -17.52,
+   "crest_db": 16.73,
+   "dc_offset": 0.00253,
+   "attack_ms": 0.0,
+   "spk_rms_dbfs": -27.38,
+   "start_click": 0.0527,
+   "end_click": 0.0,
+   "onset_jump": 0.2344,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -42.7,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.013,
+   "clipped_samples": 0,
+   "centroid_hz": 99.3,
+   "rolloff85_hz": 91.5,
+   "band_energy_pct": {
+    "<150Hz": 97.9,
+    "150-500": 2.0,
+    "500-2k": 0.0,
+    "2k-5k": 0.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 3,
+   "top_peaks": [
+    [
+     88.8,
+     0.0
+    ],
+    [
+     134.6,
+     -9.5
+    ],
+    [
+     180.3,
+     -15.5
+    ]
+   ]
+  },
+  "guilty": {
+   "name": "guilty",
+   "duration_s": 0.7,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -0.92,
+   "rms_dbfs": -13.29,
+   "active_rms_dbfs": -13.23,
+   "crest_db": 12.38,
+   "dc_offset": -0.00013,
+   "attack_ms": 0.0,
+   "spk_rms_dbfs": -14.44,
+   "start_click": 0.0059,
+   "end_click": 0.0,
+   "onset_jump": 0.0111,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -38.2,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.006,
+   "clipped_samples": 0,
+   "centroid_hz": 261.0,
+   "rolloff85_hz": 310.9,
+   "band_energy_pct": {
+    "<150Hz": 0.0,
+    "150-500": 99.7,
+    "500-2k": 0.3,
+    "2k-5k": 0.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 5,
+   "top_peaks": [
+    [
+     232.8,
+     0.0
+    ],
+    [
+     310.9,
+     -5.4
+    ],
+    [
+     349.9,
+     -14.1
+    ],
+    [
+     467.0,
+     -17.4
+    ],
+    [
+     621.8,
+     -25.6
+    ]
+   ]
+  },
+  "innocent": {
+   "name": "innocent",
+   "duration_s": 0.54,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -1.41,
+   "rms_dbfs": -14.15,
+   "active_rms_dbfs": -14.07,
+   "crest_db": 12.74,
+   "dc_offset": -0.0,
+   "attack_ms": 0.0,
+   "spk_rms_dbfs": -14.08,
+   "start_click": 0.0094,
+   "end_click": 0.0,
+   "onset_jump": 0.0742,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -37.1,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.004,
+   "clipped_samples": 0,
+   "centroid_hz": 1107.3,
+   "rolloff85_hz": 1048.4,
+   "band_energy_pct": {
+    "<150Hz": 0.0,
+    "150-500": 0.0,
+    "500-2k": 92.2,
+    "2k-5k": 7.8,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 6,
+   "top_peaks": [
+    [
+     1047.1,
+     0.0
+    ],
+    [
+     784.6,
+     -9.4
+    ],
+    [
+     2092.8,
+     -10.1
+    ],
+    [
+     1567.9,
+     -19.6
+    ],
+    [
+     3139.8,
+     -21.7
+    ],
+    [
+     2352.5,
+     -29.3
+    ]
+   ]
+  },
+  "tick": {
+   "name": "tick",
+   "duration_s": 0.05,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -4.44,
+   "rms_dbfs": -17.13,
+   "active_rms_dbfs": -17.13,
+   "crest_db": 12.7,
+   "dc_offset": 0.0,
+   "attack_ms": 0.0,
+   "spk_rms_dbfs": -17.13,
+   "start_click": 0.0211,
+   "end_click": 0.0002,
+   "onset_jump": 0.158,
+   "first_sample": 0.0,
+   "last_sample": -0.0,
+   "tail50ms_dbfs": -17.1,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.0,
+   "clipped_samples": 0,
+   "centroid_hz": 1533.0,
+   "rolloff85_hz": 1518.1,
+   "band_energy_pct": {
+    "<150Hz": 0.0,
+    "150-500": 0.0,
+    "500-2k": 97.8,
+    "2k-5k": 2.2,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 4,
+   "top_peaks": [
+    [
+     1496.6,
+     0.0
+    ],
+    [
+     3003.9,
+     -16.5
+    ],
+    [
+     1582.7,
+     -27.3
+    ],
+    [
+     1421.2,
+     -27.4
+    ]
+   ]
+  },
+  "citizen_win": {
+   "name": "citizen_win",
+   "duration_s": 0.76,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -0.92,
+   "rms_dbfs": -10.29,
+   "active_rms_dbfs": -10.29,
+   "crest_db": 9.37,
+   "dc_offset": 1e-05,
+   "attack_ms": 0.0,
+   "spk_rms_dbfs": -10.33,
+   "start_click": 0.0041,
+   "end_click": 0.0001,
+   "onset_jump": 0.0315,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -24.4,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.001,
+   "clipped_samples": 0,
+   "centroid_hz": 817.6,
+   "rolloff85_hz": 1045.7,
+   "band_energy_pct": {
+    "<150Hz": 0.0,
+    "150-500": 0.0,
+    "500-2k": 99.1,
+    "2k-5k": 0.9,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 11,
+   "top_peaks": [
+    [
+     783.9,
+     0.0
+    ],
+    [
+     659.5,
+     -1.6
+    ],
+    [
+     1045.7,
+     -5.5
+    ],
+    [
+     523.5,
+     -12.1
+    ],
+    [
+     1567.9,
+     -14.0
+    ],
+    [
+     1318.2,
+     -15.6
+    ]
+   ]
+  },
+  "mafia_win": {
+   "name": "mafia_win",
+   "duration_s": 0.94,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -0.92,
+   "rms_dbfs": -11.06,
+   "active_rms_dbfs": -11.06,
+   "crest_db": 10.14,
+   "dc_offset": -3e-05,
+   "attack_ms": 20.0,
+   "spk_rms_dbfs": -15.14,
+   "start_click": 0.0007,
+   "end_click": 0.0,
+   "onset_jump": 0.0015,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -32.8,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.004,
+   "clipped_samples": 0,
+   "centroid_hz": 161.2,
+   "rolloff85_hz": 182.4,
+   "band_energy_pct": {
+    "<150Hz": 47.2,
+    "150-500": 52.8,
+    "500-2k": 0.0,
+    "2k-5k": 0.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 8,
+   "top_peaks": [
+    [
+     129.9,
+     0.0
+    ],
+    [
+     172.3,
+     -0.9
+    ],
+    [
+     218.0,
+     -11.5
+    ],
+    [
+     259.1,
+     -13.8
+    ],
+    [
+     193.8,
+     -14.0
+    ],
+    [
+     343.9,
+     -20.6
+    ]
+   ]
+  },
+  "notify": {
+   "name": "notify(_soft_whistle_wav)",
+   "duration_s": 0.81,
+   "sr": 22050,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -11.72,
+   "rms_dbfs": -22.22,
+   "active_rms_dbfs": -21.94,
+   "crest_db": 10.5,
+   "dc_offset": -1e-05,
+   "attack_ms": 10.0,
+   "spk_rms_dbfs": -21.95,
+   "start_click": 0.0012,
+   "end_click": 0.006,
+   "onset_jump": 0.015,
+   "first_sample": 0.0,
+   "last_sample": -0.0031,
+   "tail50ms_dbfs": -33.2,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.0,
+   "clipped_samples": 0,
+   "centroid_hz": 781.0,
+   "rolloff85_hz": 781.3,
+   "band_energy_pct": {
+    "<150Hz": 0.0,
+    "150-500": 0.0,
+    "500-2k": 100.0,
+    "2k-5k": 0.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 1,
+   "top_peaks": [
+    [
+     779.9,
+     0.0
+    ]
+   ]
+  }
+ },
+ "new": {
+  "citizen_win": {
+   "name": "citizen_win",
+   "duration_s": 1.2,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -1.0,
+   "rms_dbfs": -14.41,
+   "active_rms_dbfs": -14.33,
+   "crest_db": 13.41,
+   "dc_offset": 2e-05,
+   "attack_ms": 420.0,
+   "spk_rms_dbfs": -15.62,
+   "start_click": 0.0,
+   "end_click": 0.0,
+   "onset_jump": 0.0001,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -40.5,
+   "lead_silence_s": 0.003,
+   "trail_silence_s": 0.012,
+   "clipped_samples": 0,
+   "centroid_hz": 862.7,
+   "rolloff85_hz": 1053.1,
+   "band_energy_pct": {
+    "<150Hz": 27.9,
+    "150-500": 18.4,
+    "500-2k": 45.2,
+    "2k-5k": 6.9,
+    ">5k": 1.6
+   },
+   "n_peaks_30db": 41,
+   "top_peaks": [
+    [
+     131.2,
+     0.0
+    ],
+    [
+     1051.8,
+     -1.4
+    ],
+    [
+     526.2,
+     -8.0
+    ],
+    [
+     779.9,
+     -8.0
+    ],
+    [
+     331.1,
+     -8.1
+    ],
+    [
+     196.5,
+     -9.9
+    ]
+   ]
+  },
+  "day": {
+   "name": "day",
+   "duration_s": 0.95,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -4.4,
+   "rms_dbfs": -18.16,
+   "active_rms_dbfs": -17.98,
+   "crest_db": 13.76,
+   "dc_offset": -1e-05,
+   "attack_ms": 150.0,
+   "spk_rms_dbfs": -18.17,
+   "start_click": 0.0002,
+   "end_click": 0.0,
+   "onset_jump": 0.0123,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -54.2,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.025,
+   "clipped_samples": 0,
+   "centroid_hz": 724.0,
+   "rolloff85_hz": 1047.1,
+   "band_energy_pct": {
+    "<150Hz": 0.0,
+    "150-500": 22.0,
+    "500-2k": 75.4,
+    "2k-5k": 2.6,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 16,
+   "top_peaks": [
+    [
+     659.5,
+     0.0
+    ],
+    [
+     523.5,
+     -4.2
+    ],
+    [
+     1047.1,
+     -5.8
+    ],
+    [
+     261.1,
+     -6.0
+    ],
+    [
+     391.0,
+     -7.4
+    ],
+    [
+     784.6,
+     -8.4
+    ]
+   ]
+  },
+  "death": {
+   "name": "death",
+   "duration_s": 1.5,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -5.39,
+   "rms_dbfs": -16.69,
+   "active_rms_dbfs": -16.61,
+   "crest_db": 11.3,
+   "dc_offset": 1e-05,
+   "attack_ms": 10.0,
+   "spk_rms_dbfs": -19.32,
+   "start_click": 0.0004,
+   "end_click": 0.0,
+   "onset_jump": 0.0081,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -50.6,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.019,
+   "clipped_samples": 0,
+   "centroid_hz": 242.1,
+   "rolloff85_hz": 262.1,
+   "band_energy_pct": {
+    "<150Hz": 16.1,
+    "150-500": 79.8,
+    "500-2k": 4.2,
+    "2k-5k": 0.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 16,
+   "top_peaks": [
+    [
+     220.0,
+     0.0
+    ],
+    [
+     260.1,
+     -6.9
+    ],
+    [
+     109.0,
+     -8.3
+    ],
+    [
+     131.2,
+     -8.9
+    ],
+    [
+     165.9,
+     -11.2
+    ],
+    [
+     395.3,
+     -15.1
+    ]
+   ]
+  },
+  "guilty": {
+   "name": "guilty",
+   "duration_s": 0.98,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -1.43,
+   "rms_dbfs": -16.25,
+   "active_rms_dbfs": -16.12,
+   "crest_db": 14.83,
+   "dc_offset": 7e-05,
+   "attack_ms": 250.0,
+   "spk_rms_dbfs": -19.67,
+   "start_click": 0.0002,
+   "end_click": 0.0,
+   "onset_jump": 0.0054,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -45.0,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.017,
+   "clipped_samples": 0,
+   "centroid_hz": 269.3,
+   "rolloff85_hz": 467.0,
+   "band_energy_pct": {
+    "<150Hz": 43.3,
+    "150-500": 45.3,
+    "500-2k": 10.8,
+    "2k-5k": 0.6,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 37,
+   "top_peaks": [
+    [
+     138.6,
+     0.0
+    ],
+    [
+     164.9,
+     -2.0
+    ],
+    [
+     117.1,
+     -2.2
+    ],
+    [
+     57.9,
+     -3.0
+    ],
+    [
+     467.0,
+     -8.0
+    ],
+    [
+     695.1,
+     -8.2
+    ]
+   ]
+  },
+  "innocent": {
+   "name": "innocent",
+   "duration_s": 0.88,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -4.6,
+   "rms_dbfs": -18.15,
+   "active_rms_dbfs": -17.94,
+   "crest_db": 13.55,
+   "dc_offset": 0.0,
+   "attack_ms": 210.0,
+   "spk_rms_dbfs": -18.1,
+   "start_click": 0.0,
+   "end_click": 0.0,
+   "onset_jump": 0.0159,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -55.3,
+   "lead_silence_s": 0.001,
+   "trail_silence_s": 0.024,
+   "clipped_samples": 0,
+   "centroid_hz": 904.7,
+   "rolloff85_hz": 1048.4,
+   "band_energy_pct": {
+    "<150Hz": 0.0,
+    "150-500": 8.2,
+    "500-2k": 87.7,
+    "2k-5k": 4.0,
+    ">5k": 0.1
+   },
+   "n_peaks_30db": 25,
+   "top_peaks": [
+    [
+     1045.0,
+     0.0
+    ],
+    [
+     782.6,
+     -2.4
+    ],
+    [
+     520.2,
+     -6.8
+    ],
+    [
+     660.1,
+     -6.8
+    ],
+    [
+     261.1,
+     -7.3
+    ],
+    [
+     2090.7,
+     -13.4
+    ]
+   ]
+  },
+  "join": {
+   "name": "join",
+   "duration_s": 0.52,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -10.02,
+   "rms_dbfs": -21.45,
+   "active_rms_dbfs": -21.28,
+   "crest_db": 11.42,
+   "dc_offset": -4e-05,
+   "attack_ms": 10.0,
+   "spk_rms_dbfs": -21.3,
+   "start_click": 0.0001,
+   "end_click": 0.0,
+   "onset_jump": 0.0319,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -49.4,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.016,
+   "clipped_samples": 0,
+   "centroid_hz": 860.2,
+   "rolloff85_hz": 881.5,
+   "band_energy_pct": {
+    "<150Hz": 0.0,
+    "150-500": 0.0,
+    "500-2k": 99.6,
+    "2k-5k": 0.4,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 4,
+   "top_peaks": [
+    [
+     880.2,
+     0.0
+    ],
+    [
+     659.5,
+     -7.4
+    ],
+    [
+     3457.4,
+     -27.6
+    ],
+    [
+     1760.3,
+     -28.0
+    ]
+   ]
+  },
+  "leave": {
+   "name": "leave",
+   "duration_s": 0.58,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -10.52,
+   "rms_dbfs": -21.15,
+   "active_rms_dbfs": -20.92,
+   "crest_db": 10.63,
+   "dc_offset": 2e-05,
+   "attack_ms": 100.0,
+   "spk_rms_dbfs": -21.32,
+   "start_click": 0.0001,
+   "end_click": 0.0,
+   "onset_jump": 0.0141,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -51.8,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.018,
+   "clipped_samples": 0,
+   "centroid_hz": 362.9,
+   "rolloff85_hz": 440.1,
+   "band_energy_pct": {
+    "<150Hz": 0.0,
+    "150-500": 99.1,
+    "500-2k": 0.9,
+    "2k-5k": 0.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 4,
+   "top_peaks": [
+    [
+     329.7,
+     0.0
+    ],
+    [
+     440.1,
+     -5.2
+    ],
+    [
+     1296.0,
+     -22.4
+    ],
+    [
+     659.5,
+     -29.5
+    ]
+   ]
+  },
+  "mafia_win": {
+   "name": "mafia_win",
+   "duration_s": 1.35,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -1.0,
+   "rms_dbfs": -13.22,
+   "active_rms_dbfs": -13.09,
+   "crest_db": 12.22,
+   "dc_offset": 0.00039,
+   "attack_ms": 560.0,
+   "spk_rms_dbfs": -17.01,
+   "start_click": 0.0,
+   "end_click": 0.0,
+   "onset_jump": 0.0001,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -47.1,
+   "lead_silence_s": 0.003,
+   "trail_silence_s": 0.025,
+   "clipped_samples": 0,
+   "centroid_hz": 212.6,
+   "rolloff85_hz": 325.7,
+   "band_energy_pct": {
+    "<150Hz": 46.5,
+    "150-500": 47.0,
+    "500-2k": 6.3,
+    "2k-5k": 0.2,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 37,
+   "top_peaks": [
+    [
+     174.3,
+     0.0
+    ],
+    [
+     86.8,
+     -2.7
+    ],
+    [
+     131.2,
+     -7.2
+    ],
+    [
+     261.8,
+     -8.0
+    ],
+    [
+     65.9,
+     -8.6
+    ],
+    [
+     44.4,
+     -8.8
+    ]
+   ]
+  },
+  "night": {
+   "name": "night",
+   "duration_s": 1.65,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -3.2,
+   "rms_dbfs": -17.28,
+   "active_rms_dbfs": -17.2,
+   "crest_db": 14.08,
+   "dc_offset": -0.0,
+   "attack_ms": 560.0,
+   "spk_rms_dbfs": -18.71,
+   "start_click": 0.0,
+   "end_click": 0.0,
+   "onset_jump": 0.0,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -44.8,
+   "lead_silence_s": 0.011,
+   "trail_silence_s": 0.023,
+   "clipped_samples": 0,
+   "centroid_hz": 309.5,
+   "rolloff85_hz": 439.7,
+   "band_energy_pct": {
+    "<150Hz": 12.3,
+    "150-500": 78.0,
+    "500-2k": 9.7,
+    "2k-5k": 0.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 16,
+   "top_peaks": [
+    [
+     329.7,
+     0.0
+    ],
+    [
+     164.9,
+     -3.0
+    ],
+    [
+     123.1,
+     -6.4
+    ],
+    [
+     220.0,
+     -6.6
+    ],
+    [
+     390.0,
+     -7.2
+    ],
+    [
+     520.2,
+     -7.7
+    ]
+   ]
+  },
+  "night_action": {
+   "name": "night_action",
+   "duration_s": 0.45,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -4.45,
+   "rms_dbfs": -18.38,
+   "active_rms_dbfs": -18.19,
+   "crest_db": 13.94,
+   "dc_offset": -3e-05,
+   "attack_ms": 10.0,
+   "spk_rms_dbfs": -23.44,
+   "start_click": 0.0,
+   "end_click": 0.0,
+   "onset_jump": 0.0131,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -44.5,
+   "lead_silence_s": 0.001,
+   "trail_silence_s": 0.022,
+   "clipped_samples": 0,
+   "centroid_hz": 158.5,
+   "rolloff85_hz": 165.5,
+   "band_energy_pct": {
+    "<150Hz": 29.2,
+    "150-500": 70.3,
+    "500-2k": 0.5,
+    "2k-5k": 0.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 7,
+   "top_peaks": [
+    [
+     164.2,
+     0.0
+    ],
+    [
+     110.4,
+     -4.0
+    ],
+    [
+     328.4,
+     -13.1
+    ],
+    [
+     60.6,
+     -14.8
+    ],
+    [
+     551.8,
+     -23.9
+    ],
+    [
+     185.7,
+     -26.3
+    ]
+   ]
+  },
+  "notify": {
+   "name": "notify",
+   "duration_s": 0.85,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -6.23,
+   "rms_dbfs": -20.12,
+   "active_rms_dbfs": -19.91,
+   "crest_db": 13.89,
+   "dc_offset": -0.0,
+   "attack_ms": 10.0,
+   "spk_rms_dbfs": -19.94,
+   "start_click": 0.0005,
+   "end_click": 0.0,
+   "onset_jump": 0.0997,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -53.1,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.024,
+   "clipped_samples": 0,
+   "centroid_hz": 852.9,
+   "rolloff85_hz": 786.0,
+   "band_energy_pct": {
+    "<150Hz": 0.0,
+    "150-500": 7.5,
+    "500-2k": 88.6,
+    "2k-5k": 3.8,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 5,
+   "top_peaks": [
+    [
+     783.9,
+     0.0
+    ],
+    [
+     391.6,
+     -10.5
+    ],
+    [
+     3120.3,
+     -14.7
+    ],
+    [
+     1319.6,
+     -20.0
+    ],
+    [
+     813.6,
+     -25.4
+    ]
+   ]
+  },
+  "recruit": {
+   "name": "recruit",
+   "duration_s": 0.8,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -4.41,
+   "rms_dbfs": -18.93,
+   "active_rms_dbfs": -18.77,
+   "crest_db": 14.52,
+   "dc_offset": -0.0,
+   "attack_ms": 60.0,
+   "spk_rms_dbfs": -18.91,
+   "start_click": 0.0,
+   "end_click": 0.0,
+   "onset_jump": 0.0,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -48.8,
+   "lead_silence_s": 0.004,
+   "trail_silence_s": 0.022,
+   "clipped_samples": 0,
+   "centroid_hz": 902.6,
+   "rolloff85_hz": 1323.6,
+   "band_energy_pct": {
+    "<150Hz": 0.0,
+    "150-500": 13.1,
+    "500-2k": 79.5,
+    "2k-5k": 6.9,
+    ">5k": 0.5
+   },
+   "n_peaks_30db": 24,
+   "top_peaks": [
+    [
+     522.2,
+     0.0
+    ],
+    [
+     262.4,
+     -6.2
+    ],
+    [
+     662.1,
+     -6.7
+    ],
+    [
+     1322.9,
+     -9.3
+    ],
+    [
+     781.3,
+     -9.5
+    ],
+    [
+     1041.0,
+     -11.0
+    ]
+   ]
+  },
+  "role_reveal": {
+   "name": "role_reveal",
+   "duration_s": 1.05,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -4.03,
+   "rms_dbfs": -17.59,
+   "active_rms_dbfs": -17.42,
+   "crest_db": 13.55,
+   "dc_offset": 2e-05,
+   "attack_ms": 320.0,
+   "spk_rms_dbfs": -18.73,
+   "start_click": 0.0,
+   "end_click": 0.0,
+   "onset_jump": 0.0,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -41.5,
+   "lead_silence_s": 0.02,
+   "trail_silence_s": 0.017,
+   "clipped_samples": 0,
+   "centroid_hz": 417.8,
+   "rolloff85_hz": 591.5,
+   "band_energy_pct": {
+    "<150Hz": 16.6,
+    "150-500": 64.6,
+    "500-2k": 18.2,
+    "2k-5k": 0.6,
+    ">5k": 0.1
+   },
+   "n_peaks_30db": 27,
+   "top_peaks": [
+    [
+     219.4,
+     0.0
+    ],
+    [
+     440.1,
+     -0.0
+    ],
+    [
+     148.0,
+     -3.6
+    ],
+    [
+     659.5,
+     -5.5
+    ],
+    [
+     293.4,
+     -7.9
+    ],
+    [
+     60.6,
+     -8.3
+    ]
+   ]
+  },
+  "tick": {
+   "name": "tick",
+   "duration_s": 0.06,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -3.15,
+   "rms_dbfs": -17.21,
+   "active_rms_dbfs": -17.21,
+   "crest_db": 14.06,
+   "dc_offset": -0.0005,
+   "attack_ms": 0.0,
+   "spk_rms_dbfs": -17.21,
+   "start_click": 0.0178,
+   "end_click": 0.0,
+   "onset_jump": 0.3408,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -22.9,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.005,
+   "clipped_samples": 0,
+   "centroid_hz": 1528.0,
+   "rolloff85_hz": 1496.6,
+   "band_energy_pct": {
+    "<150Hz": 0.0,
+    "150-500": 0.0,
+    "500-2k": 97.0,
+    "2k-5k": 2.8,
+    ">5k": 0.2
+   },
+   "n_peaks_30db": 4,
+   "top_peaks": [
+    [
+     1475.0,
+     0.0
+    ],
+    [
+     3434.5,
+     -15.9
+    ],
+    [
+     742.9,
+     -17.2
+    ],
+    [
+     5727.8,
+     -29.2
+    ]
+   ]
+  },
+  "trial": {
+   "name": "trial",
+   "duration_s": 0.5,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -1.0,
+   "rms_dbfs": -16.71,
+   "active_rms_dbfs": -16.45,
+   "crest_db": 15.71,
+   "dc_offset": 0.00022,
+   "attack_ms": 0.0,
+   "spk_rms_dbfs": -19.35,
+   "start_click": 0.0191,
+   "end_click": 0.0,
+   "onset_jump": 0.1314,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -48.1,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.029,
+   "clipped_samples": 0,
+   "centroid_hz": 206.1,
+   "rolloff85_hz": 407.8,
+   "band_energy_pct": {
+    "<150Hz": 57.0,
+    "150-500": 40.1,
+    "500-2k": 2.8,
+    "2k-5k": 0.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 13,
+   "top_peaks": [
+    [
+     98.2,
+     0.0
+    ],
+    [
+     261.1,
+     -3.5
+    ],
+    [
+     409.1,
+     -5.2
+    ],
+    [
+     148.0,
+     -5.6
+    ],
+    [
+     176.3,
+     -11.7
+    ],
+    [
+     197.8,
+     -14.3
+    ]
+   ]
+  },
+  "vote_cast": {
+   "name": "vote_cast",
+   "duration_s": 0.34,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -4.81,
+   "rms_dbfs": -20.72,
+   "active_rms_dbfs": -20.32,
+   "crest_db": 15.9,
+   "dc_offset": 0.0,
+   "attack_ms": 10.0,
+   "spk_rms_dbfs": -20.99,
+   "start_click": 0.0,
+   "end_click": 0.0,
+   "onset_jump": 0.0298,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -49.4,
+   "lead_silence_s": 0.001,
+   "trail_silence_s": 0.021,
+   "clipped_samples": 0,
+   "centroid_hz": 618.1,
+   "rolloff85_hz": 786.0,
+   "band_energy_pct": {
+    "<150Hz": 3.7,
+    "150-500": 37.1,
+    "500-2k": 58.2,
+    "2k-5k": 1.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 16,
+   "top_peaks": [
+    [
+     783.3,
+     0.0
+    ],
+    [
+     331.1,
+     -4.0
+    ],
+    [
+     113.0,
+     -14.1
+    ],
+    [
+     761.7,
+     -15.7
+    ],
+    [
+     3079.2,
+     -19.7
+    ],
+    [
+     1283.9,
+     -22.6
+    ]
+   ]
+  },
+  "vote_open": {
+   "name": "vote_open",
+   "duration_s": 0.8,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -6.63,
+   "rms_dbfs": -18.7,
+   "active_rms_dbfs": -18.53,
+   "crest_db": 12.07,
+   "dc_offset": -5e-05,
+   "attack_ms": 0.0,
+   "spk_rms_dbfs": -19.2,
+   "start_click": 0.0002,
+   "end_click": 0.0,
+   "onset_jump": 0.0194,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -52.9,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.022,
+   "clipped_samples": 0,
+   "centroid_hz": 614.5,
+   "rolloff85_hz": 660.8,
+   "band_energy_pct": {
+    "<150Hz": 3.8,
+    "150-500": 15.3,
+    "500-2k": 80.9,
+    "2k-5k": 0.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 11,
+   "top_peaks": [
+    [
+     659.5,
+     0.0
+    ],
+    [
+     439.4,
+     -9.4
+    ],
+    [
+     329.1,
+     -10.4
+    ],
+    [
+     779.9,
+     -12.2
+    ],
+    [
+     109.7,
+     -13.3
+    ],
+    [
+     1320.3,
+     -18.7
+    ]
+   ]
+  }
+ },
+ "legacy_extra": {
+  "MessageBeep:SystemExclamation": {
+   "name": "SystemExclamation → Windows Background.wav",
+   "duration_s": 1.289,
+   "sr": 48000,
+   "bits": 16,
+   "channels": 2,
+   "peak_dbfs": -15.15,
+   "rms_dbfs": -27.8,
+   "active_rms_dbfs": -27.41,
+   "crest_db": 12.65,
+   "dc_offset": -0.00011,
+   "attack_ms": 60.0,
+   "spk_rms_dbfs": -29.97,
+   "start_click": 0.0,
+   "end_click": 0.0,
+   "onset_jump": 0.0001,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -83.2,
+   "lead_silence_s": 0.001,
+   "trail_silence_s": 0.065,
+   "clipped_samples": 0,
+   "centroid_hz": 292.9,
+   "rolloff85_hz": 525.1,
+   "band_energy_pct": {
+    "<150Hz": 0.1,
+    "150-500": 76.7,
+    "500-2k": 23.3,
+    "2k-5k": 0.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 4,
+   "top_peaks": [
+    [
+     262.2,
+     0.0
+    ],
+    [
+     174.3,
+     -0.4
+    ],
+    [
+     525.1,
+     -3.9
+    ],
+    [
+     348.6,
+     -23.4
+    ]
+   ]
+  },
+  "MessageBeep:SystemAsterisk": {
+   "name": "SystemAsterisk → Windows Background.wav",
+   "duration_s": 1.289,
+   "sr": 48000,
+   "bits": 16,
+   "channels": 2,
+   "peak_dbfs": -15.15,
+   "rms_dbfs": -27.8,
+   "active_rms_dbfs": -27.41,
+   "crest_db": 12.65,
+   "dc_offset": -0.00011,
+   "attack_ms": 60.0,
+   "spk_rms_dbfs": -29.97,
+   "start_click": 0.0,
+   "end_click": 0.0,
+   "onset_jump": 0.0001,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -83.2,
+   "lead_silence_s": 0.001,
+   "trail_silence_s": 0.065,
+   "clipped_samples": 0,
+   "centroid_hz": 292.9,
+   "rolloff85_hz": 525.1,
+   "band_energy_pct": {
+    "<150Hz": 0.1,
+    "150-500": 76.7,
+    "500-2k": 23.3,
+    "2k-5k": 0.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 4,
+   "top_peaks": [
+    [
+     262.2,
+     0.0
+    ],
+    [
+     174.3,
+     -0.4
+    ],
+    [
+     525.1,
+     -3.9
+    ],
+    [
+     348.6,
+     -23.4
+    ]
+   ]
+  },
+  "MessageBeep:SystemHand": {
+   "name": "SystemHand → Windows Foreground.wav",
+   "duration_s": 2.109,
+   "sr": 48000,
+   "bits": 16,
+   "channels": 2,
+   "peak_dbfs": -13.46,
+   "rms_dbfs": -30.23,
+   "active_rms_dbfs": -28.02,
+   "crest_db": 16.76,
+   "dc_offset": -7e-05,
+   "attack_ms": 240.0,
+   "spk_rms_dbfs": -28.61,
+   "start_click": 0.0,
+   "end_click": 0.0,
+   "onset_jump": 0.0,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -240.0,
+   "lead_silence_s": 0.003,
+   "trail_silence_s": 0.608,
+   "clipped_samples": 0,
+   "centroid_hz": 341.7,
+   "rolloff85_hz": 391.5,
+   "band_energy_pct": {
+    "<150Hz": 0.2,
+    "150-500": 99.7,
+    "500-2k": 0.1,
+    "2k-5k": 0.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 3,
+   "top_peaks": [
+    [
+     294.8,
+     0.0
+    ],
+    [
+     390.7,
+     -1.5
+    ],
+    [
+     781.9,
+     -29.4
+    ]
+   ]
+  },
+  "MessageBeep:.Default": {
+   "name": ".Default → Windows Background.wav",
+   "duration_s": 1.289,
+   "sr": 48000,
+   "bits": 16,
+   "channels": 2,
+   "peak_dbfs": -15.15,
+   "rms_dbfs": -27.8,
+   "active_rms_dbfs": -27.41,
+   "crest_db": 12.65,
+   "dc_offset": -0.00011,
+   "attack_ms": 60.0,
+   "spk_rms_dbfs": -29.97,
+   "start_click": 0.0,
+   "end_click": 0.0,
+   "onset_jump": 0.0001,
+   "first_sample": 0.0,
+   "last_sample": 0.0,
+   "tail50ms_dbfs": -83.2,
+   "lead_silence_s": 0.001,
+   "trail_silence_s": 0.065,
+   "clipped_samples": 0,
+   "centroid_hz": 292.9,
+   "rolloff85_hz": 525.1,
+   "band_energy_pct": {
+    "<150Hz": 0.1,
+    "150-500": 76.7,
+    "500-2k": 23.3,
+    "2k-5k": 0.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 4,
+   "top_peaks": [
+    [
+     262.2,
+     0.0
+    ],
+    [
+     174.3,
+     -0.4
+    ],
+    [
+     525.1,
+     -3.9
+    ],
+    [
+     348.6,
+     -23.4
+    ]
+   ]
+  },
+  "Beep(1200,80)": {
+   "name": "Beep(1200,80) 근사",
+   "duration_s": 0.08,
+   "sr": 44100,
+   "bits": 16,
+   "channels": 1,
+   "peak_dbfs": -6.02,
+   "rms_dbfs": -9.03,
+   "active_rms_dbfs": -9.03,
+   "crest_db": 3.01,
+   "dc_offset": 0.0,
+   "attack_ms": 0.0,
+   "spk_rms_dbfs": -9.04,
+   "start_click": 0.0851,
+   "end_click": 0.0851,
+   "onset_jump": 0.0854,
+   "first_sample": 0.0,
+   "last_sample": -0.0851,
+   "tail50ms_dbfs": -9.0,
+   "lead_silence_s": 0.0,
+   "trail_silence_s": 0.0,
+   "clipped_samples": 0,
+   "centroid_hz": 1200.0,
+   "rolloff85_hz": 1205.9,
+   "band_energy_pct": {
+    "<150Hz": 0.0,
+    "150-500": 0.0,
+    "500-2k": 100.0,
+    "2k-5k": 0.0,
+    ">5k": 0.0
+   },
+   "n_peaks_30db": 1,
+   "top_peaks": [
+    [
+     1195.1,
+     0.0
+    ]
+   ]
+  }
+ }
+}

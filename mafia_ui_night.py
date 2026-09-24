@@ -425,6 +425,7 @@ class MafiaNightMixin:
             ok = self._night_action_apply(me, role, name, _notify)
             if ok:
                 self._mafia_overlay_close()
+                self._play_mafia_sound("night_action")
             # v1.29 — 실패(의사 연속보호 등)면 패널을 닫지 않고 유지: 유저가
             # 즉시 다른 대상을 다시 클릭할 수 있게.
         else:
@@ -444,6 +445,7 @@ class MafiaNightMixin:
         try:
             if (text or "").startswith(("🔪", "💉", "🕵")) and getattr(self, "_mafia_overlay", None):
                 self._mafia_overlay_close()
+                self._play_mafia_sound("night_action")
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
 
@@ -701,7 +703,7 @@ class MafiaNightMixin:
                 bg_color="#3b0d0d",
                 border_color="#ef4444",
                 duration_ms=2500,
-                sound_type="trial"
+                sound_type="death"      # v1.104 — 밤 사망 전용 조종(재판 망치 소리 재사용 중단)
             )
             if victim == getattr(self.engine, "name", None):
                 self._open_ghost_chat()

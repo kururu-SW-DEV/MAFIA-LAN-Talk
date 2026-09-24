@@ -268,6 +268,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             f"현재 참가자(1명): {me}(방장)"
         )
         self._mafia_broadcast("recruit_start", host=me, players=self._recruited_humans)
+        self._play_mafia_sound("recruit")
 
     def mafia_cancel_recruit_clicked(self):
         me = getattr(self.engine, "name", None)
@@ -412,6 +413,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
                     text="✋ 참가 취소", bg="#dc2626", activebackground="#b91c1c"
                 )
             self.add_mafia_system("🙋 마피아 게임 참가 신청을 완료했습니다!")
+            self._play_mafia_sound("join")
             self._mafia_broadcast("recruit_join", name=me)
         else:
             self._my_joined = False
@@ -420,6 +422,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
                     text="🙋 참가 신청", bg="#059669", activebackground="#047857"
                 )
             self.add_mafia_system("✋ 마피아 게임 참가를 취소했습니다.")
+            self._play_mafia_sound("leave")
             self._mafia_broadcast("recruit_leave", name=me)
 
     def _handle_chat_join(self):
@@ -548,7 +551,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             if pname == self.engine.name:
                 self.add_mafia_host_dm(msg)
                 self._my_mafia_role = prole
-                self.root.after(100, lambda r=prole: self._show_role_popup(r))
+                self.root.after(100, lambda r=prole: self._show_role_popup(r, sound=True))
             else:
                 # v1.61 — 마피아에게만 동료 명단을 함께 보낸다(다른 직업에겐 절대 안 감)
                 mates = [n for n, r in assigned.items() if r == "mafia" and n != pname]                     if prole == "mafia" else None

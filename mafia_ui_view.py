@@ -143,10 +143,12 @@ class MafiaViewMixin:
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
 
-    def _show_role_popup(self, role):
+    def _show_role_popup(self, role, sound=False):
         """게임 시작 시 화면 중앙에 눈에 띄는 대형 카드 스타일의 직업 안내 팝업을 표시."""
         if not role:
             return
+        if sound:
+            self._play_mafia_sound("role_reveal")      # v1.104 — 게임 시작 때만(내 직업 확인 버튼으로 다시 열 때는 조용히)
         self._my_mafia_role = role
 
         # 상단 마피아 바 '내 직업 확인' 버튼 갱신 및 표시
@@ -303,6 +305,10 @@ class MafiaViewMixin:
         "night": "night.wav", "day": "day.wav", "trial": "trial.wav",
         "guilty": "guilty.wav", "innocent": "innocent.wav", "tick": "tick.wav",
         "citizen_win": "citizen_win.wav", "mafia_win": "mafia_win.wav",
+        # v1.104 — 새로 추가한 효과음
+        "death": "death.wav", "vote_open": "vote_open.wav", "vote_cast": "vote_cast.wav",
+        "role_reveal": "role_reveal.wav", "night_action": "night_action.wav",
+        "recruit": "recruit.wav", "join": "join.wav", "leave": "leave.wav",
     }
 
     def _play_mafia_sound(self, snd_type):
@@ -314,7 +320,7 @@ class MafiaViewMixin:
                 fname = self._MAFIA_SOUND_FILES.get(snd_type)
                 path = os.path.join(resource_dir(), "sounds", fname) if fname else None
                 if path and os.path.isfile(path):
-                    winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+                    winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
                     return
                 if snd_type == "night":
                     winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)

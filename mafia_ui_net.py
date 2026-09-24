@@ -213,6 +213,7 @@ class MafiaNetMixin:
         self._clear_client_defense()
         self._client_reset_to_lobby()
         self.add_mafia_system("🚪 게임에서 나왔습니다.", local=True)
+        self._play_mafia_sound("leave")
 
     def _client_reset_to_lobby(self):
         """게임이 끝난 뒤(정상 종료·강제 종료 공통) 원격 참가자 쪽 상태를 로비로 되돌린다."""
@@ -868,7 +869,7 @@ class MafiaNetMixin:
                     if role == "mafia" and mates:
                         self._my_mafia_mates = list(mates)
                         self._apply_mafia_mates()
-                    self.root.after(100, lambda r=role: self._show_role_popup(r))
+                    self.root.after(100, lambda r=role: self._show_role_popup(r, sound=True))
         elif t == "start":
             self.mafia_active = True
             self._reset_ghost_state()
@@ -987,7 +988,7 @@ class MafiaNetMixin:
                     title=f"간밤의 비극 — '{victim}' 사망",
                     subtitle=f"마피아의 잔혹한 습격으로 '{victim}' 님이 사망했습니다.\n🎭 정체: [{_role_kr(role)}]",
                     icon="🕯", color="#f87171", bg_color="#3b0d0d",
-                    border_color="#ef4444", duration_ms=2500, sound_type="trial")
+                    border_color="#ef4444", duration_ms=2500, sound_type="death")
                 if victim == getattr(self.engine, "name", None):
                     self.root.after(2600, self._open_ghost_chat)
             else:
@@ -1148,6 +1149,7 @@ class MafiaNetMixin:
                 known.add(nm)
                 left.add(nm)      # v1.100 — 나간 사람은 앱이 켜져 있어 응답이 오므로 '재접속'으로 오판하지 않게 따로 기억한다
                 self.add_mafia_system(f"🚪 {nm}님이 게임에서 나갔습니다.")
+                self._play_mafia_sound("leave")
                 if p.get("alive", True):
                     p["alive"] = False
                     self._mafia_broadcast("death", name=nm)
@@ -1174,6 +1176,8 @@ class MafiaNetMixin:
             # 뜻이다. end/force_end 패킷이 유실돼도(3.6초 재시도 후 포기) 여기서 스스로 로비로 복귀한다.
             if getattr(self, "mafia_active", False) and not self._mafia_is_host():
                 self._client_reset_to_lobby()
+            if not getattr(self, "_recruiting", False) and host != getattr(self.engine, "name", None):
+                self._play_mafia_sound("recruit")      # v1.104 — 처음 받은 모집 알림에서만(참가 신청 회신으로 다시 오는 것은 제외)
             self._recruiting = True
             self._recruiter_host = host
             self._recruited_humans = self._name_list(ev.get("players"))
@@ -1214,6 +1218,7 @@ class MafiaNetMixin:
                 elif pname and pname not in self._recruited_humans:
                     self._recruited_humans.append(pname)
                     self.add_mafia_system(f"🙋 '{pname}' 님이 참가 신청했습니다! (현재 {len(self._recruited_humans)}명)")
+                    self._play_mafia_sound("join")
                     self.mafia_start_btn.config(text=f"🎮 게임 시작 (인간 {len(self._recruited_humans)}명)")
                     self._mafia_broadcast("recruit_update", host=me, players=self._recruited_humans)
                 if pname and pname in self._recruited_humans:
@@ -1226,6 +1231,7 @@ class MafiaNetMixin:
                 if pname in self._recruited_humans:
                     self._recruited_humans.remove(pname)
                     self.add_mafia_system(f"✋ '{pname}' 님이 참가를 취소했습니다. (현재 {len(self._recruited_humans)}명)")
+                    self._play_mafia_sound("leave")
                     self.mafia_start_btn.config(text=f"🎮 게임 시작 (인간 {len(self._recruited_humans)}명)")
                     self._mafia_broadcast("recruit_update", host=me, players=self._recruited_humans)
         elif t == "recruit_update":
