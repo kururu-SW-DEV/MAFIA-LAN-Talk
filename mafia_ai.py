@@ -223,6 +223,25 @@ def split_chat_tags(text):
     return (text or "").strip()
 
 
+def to_one_line(text, limit=70):
+    """v1.107 — 채팅은 사람처럼 한 줄로. 첫 줄만 남기고, limit자를 넘으면 그 안의 마지막 문장 끝(또는 공백)에서 자른다."""
+    t = (text or "").strip()
+    if not t:
+        return t
+    t = re.split(r"[\r\n]+", t)[0].strip()
+    if len(t) <= limit:
+        return t
+    cut_at = None
+    for mm in re.finditer(r"[.!?…]+|ㅋ{2,}|ㅎ{2,}|ㅠ{2,}|~+", t):
+        if mm.end() <= limit:
+            cut_at = mm.end()
+    if cut_at and cut_at >= 8:
+        return t[:cut_at].strip()
+    cut = t[:limit]
+    sp = cut.rfind(" ")
+    return (cut[:sp] if sp > limit * 0.5 else cut).rstrip(",. ")
+
+
 def clean_llm_dialect(text):
     """LLM 오염 제거 — thinking·마크다운·role 접두어·캐릭터 불일치. 잘림 최소화."""
     if not text:
@@ -432,7 +451,7 @@ class PlayerAgent:
         return self.booted
 
     # ---------- 한 턴 발언(~2초) ----------
-    def say(self, prompt, secret=False):
+    def say(self, prompt, secret=False, max_chars=70):
         """발언 지시를 주고 대사 문자열 반환. 실패 시 None."""
         if not self.booted or self.busy:
             return None
@@ -462,14 +481,16 @@ class PlayerAgent:
                 "  - 반박당하거나 의심받아도 날 세우지 말고 웃으며 받아 넘겨라.\n"
                 "  - 한 사람에게만 집중해서 공격·의심하지 마라(다구리 금지). 이미 누가 몰리고 있으면\n"
                 "    같이 몰지 말고 다른 시선·변호·질문을 섞어라. 사람 참가자도 다른 참가자와 똑같이 대하라.\n"
-                f"  - 대사는 {HERMES_REPLY_LANG} 2문장 이내. 감정에 따라 ㅋㅋ/ㅠㅠ를 갈려서 써라.")
-            ok, text = self._turn(sys_prompt, prompt, store=True)
+                f"  - 대사는 {HERMES_REPLY_LANG} **반드시 한 줄, 한 문장(40자 안팎)**으로 짧게. 줄바꿈 금지. "
+                "카톡방에서 사람이 툭 던지는 한마디처럼. 감정에 따라 ㅋㅋ/ㅠㅠ를 갈려서 써라.")
+            ok, text = self._turn(sys_prompt, prompt, store=True, max_tokens=(200 if max_chars <= 100 else 512))
             if not ok or not text:
                 return None
             text = split_chat_tags(text)
             text = clean_llm_dialect(text)
             if re.match(r"(?i)^\s*(thinking\s*:|thought\s*:|1\.)", text):
                 return None
+            text = to_one_line(text, max_chars)      # v1.107 — 3줄씩 쏟아지던 채팅을 한 줄로
             if not secret:
                 text = strip_secret_leaks(text, self.role)
                 if not text:
@@ -486,12 +507,12 @@ class PlayerAgent:
         if len(self.memory) > 40:
             self.memory = self.memory[-40:]
 
-    def _turn(self, sys_prompt, user_prompt, store=False):
+    def _turn(self, sys_prompt, user_prompt, store=False, max_tokens=512):
         """1회 호출. messages = system + memory(-N) + user. store=True면 기록 저장."""
         msgs = [{"role": "system", "content": sys_prompt}]
         msgs += self.memory[-PLAYER_CONTEXT_TURNS:]
         msgs.append({"role": "user", "content": user_prompt})
-        text = _llm_call(msgs, max_tokens=512)
+        text = _llm_call(msgs, max_tokens=max_tokens)
         text = clean_llm_dialect(text)
         if store:
             self.memory.append({"role": "user", "content": user_prompt})
@@ -561,14 +582,19 @@ class AIDirector:
             if pl.alive and pl.booted:
                 pl.observe(speaker, text)
 
-    def say_async(self, prompt_factory, honor_freq=True):
-        """모든 살아있는 AI에 비동기 발언 지시. freq 확률로만 끼어들고 아니면 침묵."""
+    def say_async(self, prompt_factory, honor_freq=True, max_speakers=2):
+        """살아있는 AI에 비동기 발언 지시. freq 확률로만 끼어들고 아니면 침묵. v1.107 — 한 번에 최대 max_speakers명만
+        말한다(전원이 우르르 쏟아내던 것을 막는다)."""
         import random as _r
+        cands = []
         for pl in self.players:
             if not pl.alive:
                 continue
             if honor_freq and _r.random() * 100 > getattr(pl, "freq", 50):
                 continue
+            cands.append(pl)
+        _r.shuffle(cands)
+        for pl in cands[:max(1, int(max_speakers))]:
             if not pl.booted:
                 self.pending_talk.append((pl, prompt_factory))
                 continue

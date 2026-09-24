@@ -508,6 +508,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             return
 
         self._mafia_disconnected = set()   # v1.42 — 새 판 시작, 접속 상태 추적 초기화
+        self._ai_utt_q = []                 # v1.107 — 지난 판의 대기 중인 AI 발언을 버린다
         self._mafia_left = set()
         self._mafia_disconnect_strikes = {}  # v1.87 — 연속 누락 횟수도 새 판마다 초기화
         self._mafia_start_disconnect_watch()
