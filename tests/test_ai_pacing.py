@@ -49,5 +49,13 @@ check("3개 발언이 모두 표시됨", len(shown) == 3)
 gaps = [shown[i + 1][0] - shown[i][0] for i in range(len(shown) - 1)]
 check("발언 사이에 5초 이상 간격", all(g >= 4.9 for g in gaps))
 check("순서 유지", [x[1] for x in shown] == ["AI0", "AI1", "AI2"])
+
+# v1.109) 최후 변론 중에는 피고인 외의 AI 발언을 내보내지 않는다
+s2 = Stub(); s2.core = SimpleNamespace(defendant="AI1", players={})
+shown.clear()
+r_other = s2._show_ai_utt("AI2", "#fff", "끼어들기")
+r_def = s2._show_ai_utt("AI1", "#fff", "억울해요")
+check("변론 중 다른 AI의 발언은 폐기", r_other is False and not any(x[1] == "AI2" for x in shown))
+check("변론 중 피고인의 발언은 통과", r_def and any(x[1] == "AI1" for x in shown))
 root.destroy()
 print("AI PACING", "PASSED" if ok_all else "FAILED"); sys.exit(0 if ok_all else 1)

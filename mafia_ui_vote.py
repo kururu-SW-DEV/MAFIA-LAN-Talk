@@ -836,6 +836,7 @@ class MafiaVoteMixin:
         self._defense_in_progress = True
         self._vote_window = False
         self.core.set_defendant(name)
+        self._ai_utt_q = []            # v1.109 — 변론 시작 전에 대기 중이던 다른 AI들의 발언을 비운다
         self.add_mafia_host(f"⚖ '{name}' 님이 최다 득표로 최후 변론대에 섰습니다. (60초)")
         self.add_mafia_system(f"⚖ 최후 변론(60초): 피고인만 변론합니다. 이후 찬반 투표({DEFENSE_VOTE_WINDOW}초).")
         self._start_defense_visuals(name)

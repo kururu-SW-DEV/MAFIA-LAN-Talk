@@ -583,6 +583,9 @@ class MafiaAIChatMixin:
     def _show_ai_utt(self, name, color, text):
         # LLM 응답은 수~수십 초 뒤에 오므로 그 사이 죽었거나 다음 판으로 넘어간 AI의 발언은 버린다.
         core = getattr(self, "core", None)
+        _def = getattr(core, "defendant", None)
+        if _def and name != _def:
+            return False      # v1.109 — 최후 변론 중에는 피고인 외에 누구도(다른 AI 포함) 말할 수 없다 — 큐에 남았던 발언도 버린다
         if self.mafia_active and core is not None:
             info = core.players.get(name)
             if not info or not info.get("is_ai") or not info.get("alive", True):

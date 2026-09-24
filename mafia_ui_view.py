@@ -977,6 +977,9 @@ class MafiaViewMixin:
             self._mafia_append_live(rec)
 
     def add_mafia_ai(self, name, text):
+        _def = getattr(getattr(self, "core", None), "defendant", None)
+        if _def and name != _def and getattr(self, "mafia_active", False):
+            return      # v1.109 — 최후 변론 중에는 피고인 AI만 말한다(협박 반응·경찰 옹호 등 다른 경로로 끼어드는 AI 차단)
         self.add_mafia_bubble(text, name)
         if getattr(self, "mafia_host_mode", False) and self.mafia_active:
             self._mafia_broadcast("asay", name=name, text=text)
