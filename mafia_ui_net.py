@@ -1217,7 +1217,12 @@ class MafiaNetMixin:
                 self.mafia_start_btn.config(text="📢 참가자 모집", bg="#b91c1c", activebackground="#7f1d1d", state="normal")
             self._mafia_pack_lobby_buttons()
             self.mafia_phase_lbl.config(text="")
-            self.add_mafia_system("📢 방장이 참가자 모집을 취소했습니다.")
+            if ev.get("started"):
+                # v1.101 — 모집이 끝나고 게임이 시작됐지만 내 이름은 명단에 없다(신청 취소·미신청) — 구경 상태로 로비 복귀
+                self._in_game = False
+                self.add_mafia_system("🎮 방장이 게임을 시작했습니다. 참가 명단에 없어 구경 상태입니다.", local=True)
+            else:
+                self.add_mafia_system("📢 방장이 참가자 모집을 취소했습니다.")
         elif t == "lobby_chat":
             sender = ev.get("sender", "알 수 없음")
             msg_text = ev.get("text", "")

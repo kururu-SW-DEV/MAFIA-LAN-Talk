@@ -873,7 +873,7 @@ class MafiaVoteMixin:
         if (self.core.players.get(me_name) or {}).get("alive", True):
             self._show_defense_vote_popup(name)
         # AI 찬반 표 — 변론 종료 후 350ms 간격 투입
-        if not self._ai_defense_voted:
+        if not getattr(self, "_ai_defense_voted", False):
             self._ai_defense_voted = True
             for i, pl in enumerate(getattr(self, "_defense_voters", [])):
                 self.root.after(300 + i * 350, lambda p=pl: self._ai_defense_vote_fast(p))

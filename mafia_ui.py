@@ -312,6 +312,35 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
 
+    def _mafia_notify_bystanders_started(self):
+        """v1.101 — 모집 알림(recruit_start)은 LAN 전체로 나가지만 게임이 시작된 뒤에는 방송이 명단의 참가자에게만
+        간다(v1.88). 그래서 참가 신청을 했다가 취소했거나 신청하지 않은 사람은 시작·종료·강제 종료 어느 것도
+        받지 못해, 모집 화면(클라이언트 상태)이 영영 풀리지 않았다. 시작하는 순간 명단에 없는 접속자에게
+        '모집 종료(시작됨)'를 한 번 보내 로비로 되돌린다."""
+        try:
+            from mafia_net import encode
+            eng = self.engine
+            me = getattr(eng, "name", None)
+            roster = set()
+            for n, p in list(self.core.players.items()):
+                if p.get("is_ai") or n == me:
+                    continue
+                ip_port = self._mafia_peer_of(n)
+                if ip_port:
+                    roster.add(tuple(ip_port))
+            pkt = encode("recruit_cancel", host=me, started=True)
+            if not pkt:
+                return
+            with eng.plock:
+                others = [k for k in eng.peers.keys() if tuple(k) not in roster]
+            for ip, port in others:
+                try:
+                    eng.send_message(ip, port, pkt)
+                except Exception as _swallow_e:
+                    applog.swallowed(_swallow_e)
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
     def _mafia_pack_lobby_buttons(self):
         """로비(모집 전) 상태의 게임바 버튼 배치: [참가 신청][참가자 모집]. 참가 신청 버튼은 방장의
         모집 알림을 못 받았어도 누를 수 있게 로비에서 항상 보인다(진행 중인 판·모집 중인 방장에게는 숨김)."""
@@ -482,6 +511,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         # 상태에서 "hdm" 역할 통보가 먼저 도착해, 그 안에서 하던
         # `core.players[me]["role"] = role` 반영이 조용히 무시되고 있었다
         # (실측 지적 — 복수 인간 플레이 전수 검토).
+        self._mafia_notify_bystanders_started()
         self._mafia_broadcast("start", players=[
             {"name": n, "is_ai": p.get("is_ai", False)} for n, p in self.core.players.items()
         ])
