@@ -1089,6 +1089,7 @@ class MafiaNetMixin:
                 if vname == getattr(self.engine, "name", None):
                     self._open_ghost_chat()
             self.core.defendant = None
+            self._close_defense_popup()      # v1.111 — 개표가 끝났는데 남아 있는 찬반·피고인 안내 팝업을 닫는다
             self._show_verdict_visuals(
                 ev.get("result", ""),
                 ev.get("name", ""),

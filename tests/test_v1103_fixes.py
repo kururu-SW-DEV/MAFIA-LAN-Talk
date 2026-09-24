@@ -100,6 +100,28 @@ try:
     app._open_ghost_chat(); root.update()
     check("종료 뒤 늦은 유령방 호출은 '사망자가 아직 없습니다'를 띄우지 않음",
           not any("사망자가 아직 없습니다" in r.get("text", "") for r in app.mafia_history[n:]))
+    # v1.111) 피고인 안내 팝업은 개표가 끝나면 닫히고, 문구에 깨지던 '닫' 글자가 없다
+    app.core.lobby_reset(); app.core.players.clear()
+    for n, a in (("방장", False), ("이팀장B", False), ("철수", True), ("영희", True)):
+        app.core.join(n, is_ai=a)
+    for _n, _r in (("방장","citizen"),("이팀장B","mafia"),("철수","citizen"),("영희","citizen")):
+        app.core.players[_n]["role"] = _r
+    app.core.phase = Phase.VOTE; app.mafia_active = True; app.mafia_host_mode = True; app.engine.name = "방장"
+    app.core.set_defendant("방장")
+    app._enter_night_sequence = lambda *a, **k: None
+    app._show_defense_vote_popup("방장"); root.update()
+    check("사전 조건: 피고인 안내 팝업이 뜸", getattr(app, "_mafia_overlay", None) is not None)
+    def _txts(w, out=None):
+        out = [] if out is None else out
+        try:
+            t = w.cget("text")
+            if t: out.append(str(t))
+        except Exception: pass
+        for c in w.winfo_children(): _txts(c, out)
+        return out
+    check("팝업 문구에 깨져 보이던 '닫'이 없음", not any("닫" in t for t in _txts(app._mafia_overlay)))
+    app._resolve_defense("방장"); root.update()
+    check("개표가 끝나면 피고인 안내 팝업이 닫힘", getattr(app, "_mafia_overlay", None) is None)
 finally:
     try: app._cancel_mafia_timer()
     except Exception: pass

@@ -2,7 +2,7 @@
 """constants.py — 포트/타이밍/색상/폰트/레이아웃/아이콘 등 앱 전역 상수.
 lan_messenger.py에서 분리됨 (유지보수를 위해 여러 파일로 분할, v5.1)."""
 
-APP_VERSION = "v1.110"   # 릴리즈마다 올린다 — 창 제목 맨 끝에 표시
+APP_VERSION = "v1.111"   # 릴리즈마다 올린다 — 창 제목 맨 끝에 표시
 DEFAULT_PORT = 50707
 PRESENCE_INTERVAL = 3.0      # 감지 주기(초)
 PEER_TIMEOUT = 12.0          # 이 시간 동안 응답이 없으면 목록에서 제거

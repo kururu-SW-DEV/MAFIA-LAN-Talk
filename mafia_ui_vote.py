@@ -1043,6 +1043,7 @@ class MafiaVoteMixin:
         # 이미 실행 중이던 틱은 못 막는다) 그 새 팝업을 이 낡은 타이머가 대신 닫아버리고
         # "시간 초과"를 잘못 공지할 수 있다. 이 패널 자신일 때만 진행하도록 식별자로 남긴다.
         my_panel = getattr(self, "_mafia_overlay", None)
+        self._defense_popup_panel = my_panel      # v1.111 — 개표가 끝나면 이 팝업을 닫을 수 있게 기억한다
         tk.Label(body, text=f"'{name}'을(를) 처형할까요?", fg=M_TEXT_LIGHT,
                  bg=C_CARD, font=(FONT_FAM, 12, "bold"),
                  wraplength=280, justify="center").pack(pady=(14, 10), padx=16)
@@ -1054,7 +1055,7 @@ class MafiaVoteMixin:
                                 "(AI들의 찬반만 사용)", fg="#fbbf24",
                      bg=C_CARD, font=M_FONT_HELP,
                      wraplength=280, justify="center").pack(pady=(0, 4), padx=16)
-            lbl10 = tk.Label(body, text="⏳ 10초 후 자동으로 닫힙니다 (10)", fg="#9ca3af",
+            lbl10 = tk.Label(body, text="⏳ 10초 후 자동으로 사라집니다 (10)", fg="#9ca3af",
                              bg=C_CARD, font=M_FONT_HELP)
             lbl10.pack(pady=(0, 6))
             emoji_render.apply(lbl10, M_FONT_HELP)
@@ -1066,7 +1067,7 @@ class MafiaVoteMixin:
                 except Exception as _swallow_e:
                     applog.swallowed(_swallow_e)
             b_close = emoji_render.make_pill_button(
-                body, "확인 (닫기)", _close_early,
+                body, "확인", _close_early,
                 bg="#374151", fg="white", hover_bg="#4b5563",
                 font_path=emoji_render.FONT_PATH_REGULAR, font_size=POPUP_SMALL_BTN_PX,
                 radius=6, pad_x=12, pad_y=4
@@ -1086,7 +1087,7 @@ class MafiaVoteMixin:
                     self.add_mafia_system("⚖ 피고인 화면 닫힘 — 찬반 투표는 AI들이 진행합니다", local=True)
                     return
                 try:
-                    lbl10.config(text=f"⏳ 10초 후 자동으로 닫힙니다 ({state['n']})")
+                    lbl10.config(text=f"⏳ 10초 후 자동으로 사라집니다 ({state['n']})")
                 except Exception:
                     return
                 self._defense_popup10 = self.root.after(1000, _tick10)
@@ -1206,6 +1207,16 @@ class MafiaVoteMixin:
             # 로컬 표시만 하고 실제 반영·판정은 호스트에게 위임한다.
             self._mafia_send_to_host("defense_vote_cast", voter=me, name=name, yes=yes)
 
+    def _close_defense_popup(self):
+        """찬반(또는 피고인 안내) 팝업이 아직 떠 있으면 닫는다. 다른 팝업이 그 자리에 있으면 건드리지 않는다."""
+        try:
+            pn = getattr(self, "_defense_popup_panel", None)
+            if pn is not None and getattr(self, "_mafia_overlay", None) is pn:
+                self._mafia_overlay_close()
+            self._defense_popup_panel = None
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
     def _resolve_defense(self, name):
         # v1.33 — 찬반 개표 이중 실행 차단: 이미 개표 완료(defendant=None 또는
         # 다른 진행)면 무시 — '찬성 3:0 처형' 직후 '찬성 0:0 부결' 재출력 방지.
@@ -1242,6 +1253,7 @@ class MafiaVoteMixin:
                 return
             self.root.after(int(VOTE_REVEAL_DELAY * 1000), self._enter_night_sequence)
             return
+        self._close_defense_popup()      # v1.111 — 피고인 안내 팝업이 개표 뒤에도 남아 (7)에서 멈춰 있던 문제
         result, yes, no = self.core.execute_defense(name)
         self._sync_ai_alive()   # v1.11 — 최후변론 처형 시 AI 발화 차단
         role2 = self.core.reveal_role(name)
