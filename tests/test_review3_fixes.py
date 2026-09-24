@@ -150,10 +150,14 @@ def _send(target, typ, **kw):
 
 
 app._mafia_send_private = _send
+_saved_players = dict(core.players)
+for _nm in ("나쁜", "친구"):                 # 유령방의 다른 사람 사망자들
+    core.players[_nm] = dict(next(iter(core.players.values())), is_ai=False, alive=False)
 app._ghost_relay_q.put(("나쁜", "철수", "첫째"))
 app._ghost_relay_q.put(("친구", "영희", "둘째"))
 app._poll_ghost_relay(); pump(0.2)
 check("한 명에게 보내다 실패해도 큐의 다음 답장은 전달됨", ("친구", "둘째") in sent)
+core.players.clear(); core.players.update(_saved_players)
 check("대기 카운터가 남지 않음", app._ghost_relay_pending == 0)
 
 # ---- ⑤ AI 색 캐시 ----

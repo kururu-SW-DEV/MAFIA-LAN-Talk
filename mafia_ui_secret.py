@@ -697,8 +697,10 @@ class MafiaSecretMixin:
         if not remote:
             self._ghost_alone_noted = False
             self._ensure_ghost_poll()
-        else:
-            self._ensure_ghost_relay_poll()
+        # v1.110 — AI의 답은 말한 사람에게만 가지 않고 유령방의 모든 사람 사망자에게 간다(호스트 본인 포함).
+        # 예전에는 호스트가 말하면 답이 호스트에게만, 원격 사망자가 말하면 그 사람에게만 가서, 같은 유령방에 있어도
+        # 서로 다른 사람과 AI의 대화를 볼 수 없었다(호스트↔AI, 원격↔AI가 따로 노는 상태).
+        self._ensure_ghost_relay_poll()
         _rr.shuffle(ais)
         picks = ais[:2] if (len(ais) > 1 and _rr.random() < 0.5) else ais[:1]
         if remote:
@@ -733,16 +735,14 @@ class MafiaSecretMixin:
                 reply = split_chat_tags(clean_llm_dialect((reply or "").strip()))
                 if not reply:
                     reply = _rr.choice(self._GHOST_FALLBACK_REPLY)
-                if remote:
-                    self._ghost_relay_q.put((me, p_.name, reply))
-                else:
-                    self._ghost_ui_q.put(("ai", p_.name, reply))
+                if not remote:
+                    self._ghost_ui_q.put(("ai", p_.name, reply))          # 호스트 본인 화면
+                self._ghost_relay_q.put((me if remote else None, p_.name, reply))   # 다른 사람 사망자에게
             except Exception:
-                if remote:      # 대기 카운터가 남지 않도록 실패해도 반드시 하나는 돌려준다
-                    self._ghost_relay_q.put((me, p_.name, _rr.choice(self._GHOST_FALLBACK_REPLY)))
+                # 대기 카운터가 남지 않도록 실패해도 반드시 하나는 돌려준다
+                self._ghost_relay_q.put((me if remote else None, p_.name, _rr.choice(self._GHOST_FALLBACK_REPLY)))
         for i, pl in enumerate(picks):
-            if remote:
-                self._ghost_relay_pending += 1
+            self._ghost_relay_pending += 1
             _th.Thread(target=worker, args=(pl, i), daemon=True).start()
 
     def _ensure_ghost_relay_poll(self):
@@ -762,11 +762,19 @@ class MafiaSecretMixin:
                 who, ai_name, text = self._ghost_relay_q.get_nowait()
                 self._ghost_relay_pending -= 1
                 try:                       # 한 건이 실패해도 큐에 남은 다른 사망자의 답장은 계속 처리한다
-                    lines = getattr(self, "_ghost_remote_log", {}).get(who)
-                    if lines is not None:
-                        lines.append(f"👻 {ai_name}: {text}")
-                        del lines[:-30]
-                    self._mafia_send_private(who, "ghost_say", name=ai_name, text=text)
+                    for _l in getattr(self, "_ghost_remote_log", {}).values():
+                        _l.append(f"👻 {ai_name}: {text}")       # 모든 원격 사망자의 대화 기록(AI 프롬프트용)
+                        del _l[:-30]
+                    me_h = getattr(self.engine, "name", None)
+                    for _n, _p in list(self.core.players.items()):
+                        if _p.get("is_ai") or _p.get("alive", True) or _n == me_h:
+                            continue
+                        try:               # 한 사람에게 보내다 실패해도 다른 사망자에게는 계속 보낸다
+                            self._mafia_send_private(_n, "ghost_say", name=ai_name, text=text)
+                        except Exception as _swallow_e:
+                            applog.swallowed(_swallow_e)
+                    if who is not None and not (self.core.players.get(me_h) or {}).get("alive", True):
+                        self._append_ghost(f"👻 {ai_name}: {text}", ai=True)      # 원격 사망자에게 한 답을 호스트(사망 시)도 본다
                 except Exception as _swallow_e:
                     applog.swallowed(_swallow_e)
         except _q.Empty:

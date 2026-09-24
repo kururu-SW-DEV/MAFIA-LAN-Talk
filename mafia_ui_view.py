@@ -89,6 +89,7 @@ class MafiaViewMixin:
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
         panel, body, close = self._make_embed_dialog(title_text, w, h)
+        self._mafia_overlay_w = w
         def _on_close():
             self._mafia_overlay = None
             self._mafia_overlay_cleanup()
@@ -685,30 +686,39 @@ class MafiaViewMixin:
                           "online": True, "game_room": True})
 
     def _grid_candidates_centered(self, frame, names, make_btn, padx=3, pady=3):
-        """v1.57 — 후보 버튼을 3열 그리드로 배치. 인원수가 3의 배수가 아니면
-        마지막 줄이 왼쪽으로 붕 떠 보이던 문제(실측 지적) — 꽉 찬 줄까지는
-        기존처럼 그리드로 늘려 채우고, 남는 마지막 줄만 별도 프레임으로 빼서
-        가운데 정렬한다.
-        make_btn(parent, name) -> 아직 grid/pack 되지 않은 Button.
-        반환: {name: widget}."""
-        n = len(names)
-        full_rows = n // 3
-        remainder = n % 3
+        """후보 버튼을 그리드로 배치한다(마지막 줄은 가운데 정렬).
+        v1.110 — 예전에는 3열 그리드에 sticky="ew"로 채우고 남는 줄만 따로 프레임에 넣었는데, 그러면 '어제 치료'처럼
+        긴 문구 버튼 하나가 그 열을 넓혀 전체 폭이 팝업 폭을 넘고, 넘친 쪽 버튼의 이미지가 잘려 둥근 모서리가 각져
+        보였다(잘리지 않은 마지막 줄 버튼만 둥글게 보임). 모든 버튼을 한 그리드에 두고(열 폭 균등·늘리지 않음),
+        가장 넓은 버튼이 팝업 폭에 안 들어가면 열 수를 줄이며, 마지막 줄은 열을 2칸씩 차지시켜 가운데 정렬한다.
+        make_btn(parent, name) -> 아직 grid/pack 되지 않은 Button.  반환: {name: widget}."""
         widgets = {}
-        for i in range(full_rows * 3):
-            name = names[i]
+        btns = []
+        for name in names:
             b = make_btn(frame, name)
-            b.grid(row=i // 3, column=i % 3, sticky="ew", padx=padx, pady=pady)
             widgets[name] = b
-        for c in range(3):
-            frame.columnconfigure(c, weight=1)
-        if remainder:
-            last_row = tk.Frame(frame, bg=frame.cget("bg"))
-            last_row.grid(row=full_rows, column=0, columnspan=3, pady=pady)
-            for name in names[full_rows * 3:]:
-                b = make_btn(last_row, name)
-                b.pack(side="left", padx=padx)
-                widgets[name] = b
+            btns.append(b)
+        try:
+            frame.update_idletasks()
+            maxw = max((b.winfo_reqwidth() for b in btns), default=0)
+            avail = int(getattr(self, "_mafia_overlay_w", 350) or 350) - 50
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+            maxw, avail = 0, 306
+        cols = 3
+        while cols > 1 and cols * (maxw + 2 * padx) > avail:
+            cols -= 1
+        n = len(btns)
+        full_rows, rem = divmod(n, cols)
+        for i, b in enumerate(btns):
+            r, c = divmod(i, cols)
+            if r < full_rows:
+                col = c * 2
+            else:
+                col = (cols - rem) + c * 2          # 마지막 줄은 남는 칸을 양옆에 균등 배분해 가운데 정렬
+            b.grid(row=r, column=col, columnspan=2, padx=padx, pady=pady)
+        for c in range(cols * 2):
+            frame.columnconfigure(c, weight=1, uniform="cand")
         return widgets
 
     def _wrap_overlay_close_with(self, extra_cleanup):
