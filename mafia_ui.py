@@ -333,7 +333,26 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
                 return
             with eng.plock:
                 others = [k for k in eng.peers.keys() if tuple(k) not in roster]
+            self._mafia_bystanders = [tuple(k) for k in others]     # v1.101 — 종료·강제 종료도 알려 준다
             for ip, port in others:
+                try:
+                    eng.send_message(ip, port, pkt)
+                except Exception as _swallow_e:
+                    applog.swallowed(_swallow_e)
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
+    def _mafia_notify_bystanders_end(self, kind, winner=None):
+        """v1.102 — 구경 상태로 풀려난 사람(명단 밖)에게 게임이 끝났음(강제 종료 포함)을 한 번 알린다. 게임 중 방송은
+        명단의 참가자에게만 가므로, 방장이 강제 종료해도 이들은 아무 안내도 받지 못했다."""
+        try:
+            from mafia_net import encode
+            eng = self.engine
+            pkt = encode("spectate_end", host=getattr(eng, "name", None), kind=kind, winner=winner)
+            targets, self._mafia_bystanders = list(getattr(self, "_mafia_bystanders", None) or []), []
+            if not pkt:
+                return
+            for ip, port in targets:
                 try:
                     eng.send_message(ip, port, pkt)
                 except Exception as _swallow_e:
@@ -588,6 +607,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         if self._mafia_is_host():
             self._mafia_broadcast("end", winner=winner, roles={
                 n: p.get("role") for n, p in self.core.players.items()})
+            self._mafia_notify_bystanders_end("end", winner)
         self._cancel_mafia_timer()
         self._mafia_stop_disconnect_watch()
         self.core.phase = Phase.END
@@ -628,6 +648,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             return          # v1.95 — 확인창이 떠 있는 동안 게임이 이미 끝났으면(승패가 났으면) 다시 끝내지 않는다
         self.add_mafia_system("🛑 방장이 게임을 강제로 종료했습니다.")
         self._mafia_broadcast("force_end")
+        self._mafia_notify_bystanders_end("force")
         self._cancel_mafia_timer()
         self._mafia_stop_disconnect_watch()
         self._mafia_room_close()

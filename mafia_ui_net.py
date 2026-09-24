@@ -574,6 +574,10 @@ class MafiaNetMixin:
         me = getattr(self.engine, "name", None)
         host = getattr(self, "_recruiter_host", None)
         am_host = bool(self._mafia_is_host() or (host and host == me))
+        if t == "spectate_end":
+            # v1.102 — 게임 시작 때 '구경 상태'로 풀려난 사람에게 그 방장이 보내는 종료 알림
+            sh = getattr(self, "_spectating_host", None)
+            return (not am_host) and bool(sh) and self._sender_is(sh, sender_name, peer)
         if t in self._HOST_ONLY_EVENTS:
             if am_host:
                 return False            # 방장에게 방장 전용 이벤트가 올 이유가 없다
@@ -1021,6 +1025,13 @@ class MafiaNetMixin:
         elif t == "force_end":
             if not self._mafia_is_host():
                 self._client_force_quit_end()
+        elif t == "spectate_end":
+            self._spectating_host = None
+            if ev.get("kind") == "force":
+                self.add_mafia_system("🛑 방장이 게임을 강제로 종료했습니다.", local=True)
+            else:
+                w = ev.get("winner")
+                self.add_mafia_system("🏁 게임이 끝났습니다" + (f" — {'시민' if w == 'citizen' else '마피아'} 팀 승리." if w in ("citizen", "mafia") else "."), local=True)
         elif t == "defense_start":
             # v1.95 — 재투표 팝업을 닫던 유일한 것이 클라이언트 기한 타이머였는데 v1.92가 그걸
             # 이 시점에 취소하게 해서, 재투표 창이 변론 내내 남아 눌리는 채로 떠 있었다.
@@ -1217,6 +1228,7 @@ class MafiaNetMixin:
                 self.mafia_start_btn.config(text="📢 참가자 모집", bg="#b91c1c", activebackground="#7f1d1d", state="normal")
             self._mafia_pack_lobby_buttons()
             self.mafia_phase_lbl.config(text="")
+            self._spectating_host = ev.get("host") if ev.get("started") else None
             if ev.get("started"):
                 # v1.101 — 모집이 끝나고 게임이 시작됐지만 내 이름은 명단에 없다(신청 취소·미신청) — 구경 상태로 로비 복귀
                 self._in_game = False
@@ -1380,27 +1392,6 @@ class MafiaNetMixin:
                 except Exception as _swallow_e:
                     applog.swallowed(_swallow_e)
                 setattr(self, attr, None)
-
-    def _host_after_removal(self, name):
-        """v1.100 — 참가자가 나가거나 끊겨 사망 처리된 뒤 진행 중인 단계를 다시 판단한다. 예전에는 승패만
-        다시 봐서, 그 사람 표만 남은 투표가 시한까지 기다리거나 죽은 피고인의 재판이 그대로 진행돼
-        '처형 확정 + 직업 공개'가 나왔다."""
-        try:
-            if not self._mafia_is_host() or not self.mafia_active:
-                return
-            defendant = getattr(self.core, "defendant", None)
-            if defendant:
-                if defendant == name:
-                    self._clear_defense_deadline()
-                    self.root.after(300, lambda: self._resolve_defense(name))
-                else:
-                    self._maybe_resolve_defense(defendant)
-            elif getattr(self, "_revote_tied", None) and not getattr(self, "_revote_tally_scheduled", True):
-                self._check_revote_done()
-            elif getattr(self, "_vote_window", False) and self.core.all_voted():
-                self._schedule_tally(300)
-        except Exception as _swallow_e:
-            applog.swallowed(_swallow_e)
 
     def _host_receive_vote_cast(self, voter, target):
         """v1.61 — 호스트 전용: 원격 참가자가 보낸 낮 투표(vote_cast)를 실제

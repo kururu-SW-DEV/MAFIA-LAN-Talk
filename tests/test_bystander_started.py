@@ -109,6 +109,15 @@ try:
     app._mafia_notify_bystanders_started()
     check("B의 모집 상태가 풀림", pump(lambda: stubB._recruiting is False and stubB._recruiter_host is None, timeout=10))
     check("B는 구경 상태(_in_game False)", stubB._in_game is False)
+    n = len(stubB.mafia_history)
+    app.mafia_active = True; app.mafia_host_mode = True
+    app._mafia_notify_bystanders_end("force")
+    check("강제 종료 안내가 구경 상태의 B에게도 도착",
+          pump(lambda: any("강제로 종료" in r.get("text", "") for r in stubB.mafia_history[n:]), timeout=10))
+    n = len(stubB.mafia_history)
+    app._mafia_notify_bystanders_end("force")
+    pump(lambda: False, timeout=1.0)
+    check("한 번만 보냄(중복 없음)", len(stubB.mafia_history) == n)
 finally:
     try: app._cancel_mafia_timer()
     except Exception: pass

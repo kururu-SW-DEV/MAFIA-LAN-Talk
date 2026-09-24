@@ -1291,3 +1291,24 @@ class MafiaVoteMixin:
             self.core.cast_defense_vote(pl.name, yes)
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
+
+    def _host_after_removal(self, name):
+        """v1.100 — 참가자가 나가거나 끊겨 사망 처리된 뒤 진행 중인 단계를 다시 판단한다. 예전에는 승패만
+        다시 봐서, 그 사람 표만 남은 투표가 시한까지 기다리거나 죽은 피고인의 재판이 그대로 진행돼
+        '처형 확정 + 직업 공개'가 나왔다."""
+        try:
+            if not self._mafia_is_host() or not self.mafia_active:
+                return
+            defendant = getattr(self.core, "defendant", None)
+            if defendant:
+                if defendant == name:
+                    self._clear_defense_deadline()
+                    self.root.after(300, lambda: self._resolve_defense(name))
+                else:
+                    self._maybe_resolve_defense(defendant)
+            elif getattr(self, "_revote_tied", None) and not getattr(self, "_revote_tally_scheduled", True):
+                self._check_revote_done()
+            elif getattr(self, "_vote_window", False) and self.core.all_voted():
+                self._schedule_tally(300)
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
