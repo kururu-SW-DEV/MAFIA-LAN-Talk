@@ -705,7 +705,7 @@ class MafiaVoteMixin:
                 if getattr(pl, "alive", False):
                     self.root.after(300 + i * 300,
                                     lambda p=pl, t=tied: self._ai_revote_fast(t, p))
-            self._revote_deadline = self.root.after(25000, self._force_revote_tally)
+            self._revote_deadline = self.root.after((VOTE_WINDOW + 1) * 1000, self._force_revote_tally)
             return
 
         # AI 전원 자동 재투표 — 동률 후보 중 (인격 성향 기반 즉시 결정)
@@ -719,15 +719,48 @@ class MafiaVoteMixin:
             self.add_mafia_system("🗳 동률 후보가 나뿐 — 유일 대상 제외, 기권 개표로 진행합니다.", local=True)
             self.root.after(300, self._force_revote_tally)
             return
-        # 유저 무응답 대비 — 30초 후 미투자 기권 + 강제 개표(멈춤 원천 차단)
-        self._revote_deadline = self.root.after(30000, self._force_revote_tally)
+        # 유저 무응답 대비 — 미투표 기권 + 강제 개표(멈춤 원천 차단). v1.112 — 화면에 보이는 카운트다운(VOTE_WINDOW초)과
+        # 같은 시각에 맞춘다(예전엔 눈에 안 보이는 30초짜리 안전망뿐이라 "기권되는 타이머가 없다"고 느껴졌다).
+        self._revote_deadline = self.root.after((VOTE_WINDOW + 1) * 1000, self._force_revote_tally)
         body = self._mafia_overlay_open("🔄 재투표 — 동률 후보 중 지목", w=360, h=None)
+        my_revote_panel = getattr(self, "_mafia_overlay", None)
         tk.Label(body, text="동률 후보 중에서만 선택 가능 (기권 허용)",
                  fg="#a78bfa", bg=C_CARD, font=M_FONT_BODY_B).pack(pady=(10, 6))
         prog_lbl = tk.Label(body, text="", fg="#a78bfa", bg=C_CARD, font=M_FONT_HELP)
         prog_lbl.pack(pady=(0, 6))
         self._vote_progress_lbl = prog_lbl
         self._refresh_vote_progress_label()
+        rv_lbl = tk.Label(body, text=f"⏳ 남은 시간: {VOTE_WINDOW}초 — 투표하지 않으면 기권 처리됩니다", fg="#9ca3af",
+                          bg=C_CARD, font=M_FONT_HELP)
+        rv_lbl.pack(pady=(0, 6))
+        emoji_render.apply(rv_lbl, M_FONT_HELP)
+        rv_state = {"n": VOTE_WINDOW}
+
+        def _tick_revote():
+            self._revote_tick = None
+            if getattr(self, "_mafia_overlay", None) is not my_revote_panel:
+                return                     # 이미 표를 냈거나 다른 팝업이 이 자리를 차지했다
+            rv_state["n"] -= 1
+            if rv_state["n"] <= 0:
+                self.add_mafia_system("⏰ 재투표 시간 초과 — 기권 처리", local=True)
+                self._force_revote_tally()
+                return
+            try:
+                rv_lbl.config(text=f"⏳ 남은 시간: {rv_state['n']}초 — 투표하지 않으면 기권 처리됩니다")
+            except Exception:
+                return
+            self._revote_tick = self.root.after(1000, _tick_revote)
+        self._revote_tick = self.root.after(1000, _tick_revote)
+
+        def _cancel_revote_tick():
+            t = getattr(self, "_revote_tick", None)
+            if t:
+                try:
+                    self.root.after_cancel(t)
+                except Exception as _swallow_e:
+                    applog.swallowed(_swallow_e)
+                self._revote_tick = None
+        self._wrap_overlay_close_with(_cancel_revote_tick)
         row = tk.Frame(body, bg=C_CARD); row.pack(fill="x", padx=18, pady=(0, 8))
         me_now = getattr(self.engine, "name", None)
         # v1.10 — 재투표 후보에서 나(유저) 제외(자투 방지 — v1.03 원칙)

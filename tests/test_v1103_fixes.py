@@ -122,6 +122,26 @@ try:
     check("팝업 문구에 깨져 보이던 '닫'이 없음", not any("닫" in t for t in _txts(app._mafia_overlay)))
     app._resolve_defense("방장"); root.update()
     check("개표가 끝나면 피고인 안내 팝업이 닫힘", getattr(app, "_mafia_overlay", None) is None)
+    # v1.112) 재투표에도 화면에 보이는 카운트다운이 있고, 시간이 다 되면 기권 처리 후 팝업이 닫힘
+    import mafia_ui_vote as _mv
+    _mv.VOTE_WINDOW = 3
+    app.core.lobby_reset(); app.core.players.clear()
+    for n, a in (("방장", False), ("철수", True), ("영희", True), ("미나", True)):
+        app.core.join(n, is_ai=a)
+    for _n, _r in (("방장","citizen"),("철수","mafia"),("영희","citizen"),("미나","citizen")):
+        app.core.players[_n]["role"] = _r
+    app.core.phase = Phase.VOTE; app.mafia_active = True; app.mafia_host_mode = True; app.engine.name = "방장"
+    app.ai.players = []
+    app._tally_full = lambda *a, **k: None
+    app._open_revote_popup(["철수", "영희"]); root.update()
+    _lbls = _txts(app._mafia_overlay) if getattr(app, "_mafia_overlay", None) is not None else []
+    check("재투표 팝업에 남은 시간 표시가 있음", any("남은 시간" in t and "기권" in t for t in _lbls))
+    _t0 = time.time()
+    while time.time() - _t0 < 6 and getattr(app, "_mafia_overlay", None) is not None:
+        root.update(); time.sleep(0.05)
+    check("시간이 다 되면 팝업이 닫힘", getattr(app, "_mafia_overlay", None) is None)
+    check("투표하지 않은 내가 기권 처리됨", "방장" in app.core.abstains)
+    _mv.VOTE_WINDOW = 15
 finally:
     try: app._cancel_mafia_timer()
     except Exception: pass
