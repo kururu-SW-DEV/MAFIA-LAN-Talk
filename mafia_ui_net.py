@@ -140,6 +140,8 @@ class MafiaNetMixin:
         상태를 로비로 되돌린다(안 그러면 mafia_active가 남아 다음 판 start
         수신 시 core가 LOBBY가 아니라 명단 동기화가 조용히 무시된다)."""
         label = "시민" if winner == "citizen" else "마피아"
+        self._epilogue_host = getattr(self, "_recruiter_host", None)      # v1.106 — 종료 뒤 90초 동안 이 방장의 후일담을 받는다
+        self._epilogue_until = time.time() + 90
         self._mafia_room_close()
         self._reset_ghost_state()
         self._ghost_ui_open = False
@@ -582,6 +584,11 @@ class MafiaNetMixin:
         me = getattr(self.engine, "name", None)
         host = getattr(self, "_recruiter_host", None)
         am_host = bool(self._mafia_is_host() or (host and host == me))
+        if t == "epilogue":
+            # v1.106 — 게임이 끝난 직후 방장이 보내는 AI 후일담: 방금 끝난 판의 방장이 보낸 것만, 종료 뒤 90초 안에만 받는다
+            eh = getattr(self, "_epilogue_host", None)
+            return ((not am_host) and bool(eh) and time.time() < getattr(self, "_epilogue_until", 0)
+                    and self._sender_is(eh, sender_name, peer))
         if t == "spectate_end":
             # v1.102 — 게임 시작 때 '구경 상태'로 풀려난 사람에게 그 방장이 보내는 종료 알림
             sh = getattr(self, "_spectating_host", None)
@@ -1049,6 +1056,10 @@ class MafiaNetMixin:
         elif t == "force_end":
             if not self._mafia_is_host():
                 self._client_force_quit_end()
+        elif t == "epilogue":
+            _en, _et = ev.get("name"), ev.get("text")
+            if isinstance(_en, str) and isinstance(_et, str) and _et and not self._mafia_is_host():
+                self.add_mafia_bubble(_et[:600], _en[:40])
         elif t == "spectate_end":
             self._spectating_host = None
             if ev.get("kind") == "force":

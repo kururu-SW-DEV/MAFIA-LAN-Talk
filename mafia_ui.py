@@ -616,6 +616,21 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             self._mafia_broadcast("end", winner=winner, roles={
                 n: p.get("role") for n, p in self.core.players.items()})
             self._mafia_notify_bystanders_end("end", winner)
+            # v1.106 — 후일담을 받을 참가자(끊기거나 나간 사람 제외)를 기억해 둔다. 90초 동안만 유효.
+            try:
+                me_n = getattr(self.engine, "name", None)
+                gone = set(getattr(self, "_mafia_disconnected", None) or ()) | set(getattr(self, "_mafia_left", None) or ())
+                tg = []
+                for n, p in list(self.core.players.items()):
+                    if p.get("is_ai") or n == me_n or n in gone:
+                        continue
+                    ip_port = self._mafia_peer_of(n)
+                    if ip_port:
+                        tg.append(tuple(ip_port))
+                self._epilogue_targets = tg
+                self._epilogue_until = time.time() + 90
+            except Exception as _swallow_e:
+                applog.swallowed(_swallow_e)
         self._cancel_mafia_timer()
         self._mafia_stop_disconnect_watch()
         self.core.phase = Phase.END

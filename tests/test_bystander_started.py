@@ -118,6 +118,20 @@ try:
     app._mafia_notify_bystanders_end("force")
     pump(lambda: False, timeout=1.0)
     check("한 번만 보냄(중복 없음)", len(stubB.mafia_history) == n)
+    # v1.106) 종료 뒤 AI 후일담이 참가자에게도 전달
+    import time as _t
+    app.mafia_active = False; app.mafia_host_mode = False
+    app._epilogue_targets = [("127.0.0.1", B_PORT)]; app._epilogue_until = _t.time() + 60
+    stubB._epilogue_host = "방장"; stubB._epilogue_until = _t.time() + 60
+    n = len(stubB.mafia_history)
+    app.add_mafia_ai("철수", "다들 수고했어요 ㅎㅎ")
+    check("종료 뒤 AI 후일담이 참가자 화면에 도착",
+          pump(lambda: any("다들 수고했어요" in r.get("text", "") for r in stubB.mafia_history[n:]), timeout=10))
+    stubB._epilogue_until = 0
+    n = len(stubB.mafia_history)
+    app.add_mafia_ai("철수", "늦은 말")
+    pump(lambda: False, timeout=1.5)
+    check("90초가 지난 뒤에는 받지 않음", not any("늦은 말" in r.get("text", "") for r in stubB.mafia_history[n:]))
 finally:
     try: app._cancel_mafia_timer()
     except Exception: pass

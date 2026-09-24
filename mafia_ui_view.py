@@ -980,6 +980,18 @@ class MafiaViewMixin:
         self.add_mafia_bubble(text, name)
         if getattr(self, "mafia_host_mode", False) and self.mafia_active:
             self._mafia_broadcast("asay", name=name, text=text)
+        elif time.time() < getattr(self, "_epilogue_until", 0):
+            # v1.106 — 게임이 끝난 뒤 AI의 후일담: 종료 때 기억해 둔 참가자들에게만 보낸다(방송 명단은 이미 비워졌다)
+            try:
+                from mafia_net import encode
+                pkt = encode("epilogue", host=getattr(self.engine, "name", None), name=name, text=str(text)[:600])
+                for ip, port in list(getattr(self, "_epilogue_targets", None) or []):
+                    try:
+                        self.engine.send_message(ip, port, pkt)
+                    except Exception as _swallow_e:
+                        applog.swallowed(_swallow_e)
+            except Exception as _swallow_e:
+                applog.swallowed(_swallow_e)
 
     def _is_mafia_room_active(self):
         # v1.90 — mafia_active(게임이 실제로 진행 중인지)까지 요구하고 있었다. 이 함수는
