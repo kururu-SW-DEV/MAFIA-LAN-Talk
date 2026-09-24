@@ -223,7 +223,7 @@ def split_chat_tags(text):
     return (text or "").strip()
 
 
-def to_one_line(text, limit=70):
+def to_one_line(text, limit=40):
     """v1.107 — 채팅은 사람처럼 한 줄로. 첫 줄만 남기고, limit자를 넘으면 그 안의 마지막 문장 끝(또는 공백)에서 자른다."""
     t = (text or "").strip()
     if not t:
@@ -451,7 +451,7 @@ class PlayerAgent:
         return self.booted
 
     # ---------- 한 턴 발언(~2초) ----------
-    def say(self, prompt, secret=False, max_chars=70):
+    def say(self, prompt, secret=False, max_chars=40):
         """발언 지시를 주고 대사 문자열 반환. 실패 시 None."""
         if not self.booted or self.busy:
             return None
@@ -481,9 +481,9 @@ class PlayerAgent:
                 "  - 반박당하거나 의심받아도 날 세우지 말고 웃으며 받아 넘겨라.\n"
                 "  - 한 사람에게만 집중해서 공격·의심하지 마라(다구리 금지). 이미 누가 몰리고 있으면\n"
                 "    같이 몰지 말고 다른 시선·변호·질문을 섞어라. 사람 참가자도 다른 참가자와 똑같이 대하라.\n"
-                f"  - 대사는 {HERMES_REPLY_LANG} **반드시 한 줄, 한 문장(40자 안팎)**으로 짧게. 줄바꿈 금지. "
+                f"  - 대사는 {HERMES_REPLY_LANG} **반드시 한 줄, 한 문장(20자 안팎)**으로 짧게. 줄바꿈 금지. "
                 "카톡방에서 사람이 툭 던지는 한마디처럼. 감정에 따라 ㅋㅋ/ㅠㅠ를 갈려서 써라.")
-            ok, text = self._turn(sys_prompt, prompt, store=True, max_tokens=(200 if max_chars <= 100 else 512))
+            ok, text = self._turn(sys_prompt, prompt, store=True, max_tokens=(120 if max_chars <= 60 else (200 if max_chars <= 100 else 512)))
             if not ok or not text:
                 return None
             text = split_chat_tags(text)

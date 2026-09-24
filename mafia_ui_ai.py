@@ -248,7 +248,7 @@ class MafiaAIChatMixin:
                 cd[(cop.name, x)] = now
                 prompt = (f"[옹호] '{x}'님이 의심받고 있습니다. 당신은 '{x}'님이 마피아가 아니라는 걸 알지만, 경찰이라는 사실이나 "
                           f"조사했다는 말은 절대 하지 말고 '{x}님은 마피아 아닌 것 같아요' 식으로 말투·행동 같은 자연스러운 이유를 붙여 "
-                          f"편들어 주세요. 다른 사람을 마피아라고 지목하지 마세요. 한 문장(40자 안팎)으로 아주 짧게.")
+                          f"편들어 주세요. 다른 사람을 마피아라고 지목하지 마세요. 한 문장(20자 안팎)으로 아주 짧게.")
                 self.root.after(random_mod.randint(1200, 2800),
                                 lambda p=cop, pr=prompt: self.ai.say_one_async(p, lambda _pl, _pr=pr: _pr))
                 return
@@ -291,12 +291,12 @@ class MafiaAIChatMixin:
                       + "그럴듯한 어젯밤 조사 결과를 지어내세요: "
                       + (f"마피아 동료({', '.join(mates)})를 '마피아 아니었어'라고 감싸거나, " if mates else "")
                       + f"시민({', '.join(others[:6])}) 중 한 명을 '마피아였어'라고 몰아도 됩니다. "
-                      "반드시 '나 경찰이야'라는 표현을 쓰고, 한 문장(40자 안팎)으로 아주 짧게로 친구들끼리 카톡하듯 한 줄로 말하세요.")
+                      "반드시 '나 경찰이야'라는 표현을 쓰고, 한 문장(20자 안팎)으로 아주 짧게, 친구들끼리 카톡하듯 한 줄로 말하세요.")
         else:
             prompt = ("[거짓 커밍아웃 — 마피아 전략] 당신은 마피아지만 시민들을 혼란시키려고 지금 '나 의사야'라고 거짓으로 밝히세요"
                       "(이번 한 번만 신분을 말해도 됩니다). '어젯밤 ○○를 지켰어'처럼 그럴듯하게 지어내세요"
                       + (f"(나 자신이나 마피아 동료({', '.join(mates)})를 지켰다고 해도 됩니다)" if mates else "")
-                      + ". 반드시 '나 의사야'라는 표현을 쓰고, 한 문장(40자 안팎)으로 아주 짧게로 친구들끼리 카톡하듯 한 줄로 말하세요.")
+                      + ". 반드시 '나 의사야'라는 표현을 쓰고, 한 문장(20자 안팎)으로 아주 짧게, 친구들끼리 카톡하듯 한 줄로 말하세요.")
         pl.bluffed = True
         self._bluff_count = getattr(self, "_bluff_count", 0) + 1
         self.ai.say_one_async(pl, lambda _p, _pr=prompt: _pr)
@@ -368,7 +368,7 @@ class MafiaAIChatMixin:
             return (f"[사람에게 말 걸기] 현재 낮 {self.core.day_no}, 생존: {alive}\n"
                     f"'{p.name}'로서 사람 참가자 '{target}'님에게 직접 말을 거세요: 이름을 부르며 "
                     f"지금까지의 대화·행동에 대한 질문을 하나 던지거나 의견을 물으세요. "
-                    f"한 문장(40자 안팎)으로 아주 짧게, 혼잣말/규칙 설명 금지.\n" + self._NO_PILE_ON)
+                    f"한 문장(20자 안팎)으로 아주 짧게, 혼잣말/규칙 설명 금지.\n" + self._NO_PILE_ON)
         self._human_last_talk = talk
         asked[target] = now                   # 같은 사람에게 60초 안에는 다시 걸지 않는다(발언 시각은 건드리지 않음)
         self.ai.say_one_async(pl, factory)
@@ -399,7 +399,7 @@ class MafiaAIChatMixin:
                 f"[직접 지목] '{speaker}'님이 당신('{pl.name}')의 이름을 불렀습니다.\n"
                 f"발언: \"{user_text}\"\n"
                 f"그 사람에게 직접 대답하세요: 이름을 부르며 질문에 답하거나 태도를 밝히세요. "
-                f"한 문장(40자 안팎)으로 아주 짧게.\n[참고] 현재 낮 {self.core.day_no}, 생존: {alive}"))
+                f"한 문장(20자 안팎)으로 아주 짧게.\n[참고] 현재 낮 {self.core.day_no}, 생존: {alive}"))
             delay = 700 + idx * 900
             self.root.after(delay, lambda f=factory: self.ai.say_async(f))
         others = [pl for pl in self.ai.players
@@ -409,7 +409,7 @@ class MafiaAIChatMixin:
             factory2 = (lambda pl=pick: (
                 f"[게임 상황] '{speaker}' 님이 '{mentioned[0].name}'님에게 "
                 f"말했습니다: \"{user_text}\"\n"
-                f"당신('{pl.name}')은 그 대화에 곁에서 한마디만 보태세요. 한 문장(40자 안팎)으로 아주 짧게."))
+                f"당신('{pl.name}')은 그 대화에 곁에서 한마디만 보태세요. 한 문장(20자 안팎)으로 아주 짧게."))
             self.root.after(1900, lambda f=factory2: self.ai.say_async(f))
 
     def _ai_threat_reaction(self, pl, speaker=None):
@@ -463,7 +463,7 @@ class MafiaAIChatMixin:
                     f"'{pl.name}'로서 방금 그 말에 **직접 대답**하세요:\n"
                     f"  1) 말 건 사람의 내용을 인용하거나 질문에 답하고\n"
                     f"  2) 동의/반박/질문/농담 중 자연스러운 태도를 고르세요(무조건 의심·반박하지 말 것).\n"
-                    f"혼잣말/게임 규칙 설명은 금지. 한 문장(40자 안팎)으로 아주 짧게.\n" + self._NO_PILE_ON)
+                    f"혼잣말/게임 규칙 설명은 금지. 한 문장(20자 안팎)으로 아주 짧게.\n" + self._NO_PILE_ON)
         if max_replies is None:
             self.ai.say_async(factory)          # 게임 상황 전환 등: 예전처럼 여러 명이 반응
         else:
@@ -514,7 +514,7 @@ class MafiaAIChatMixin:
             f"'{pl.name}'는 그 말에 **직접 대답**하세요:\n"
             f"  1) 상대 말을 인용하거나 답하고\n"
             f"  2) 동의/반박/농담 중 태도를 명확히 하세요. "
-            f"혼잣말 금지, 한 문장(40자 안팎)으로 아주 짧게.\n" + self._NO_PILE_ON))
+            f"혼잣말 금지, 한 문장(20자 안팎)으로 아주 짧게.\n" + self._NO_PILE_ON))
         self.ai.say_one_async(pick, factory)
 
     def _ai_vs_ai_banter(self):
@@ -533,18 +533,18 @@ class MafiaAIChatMixin:
             return (f"[AI끼리 토론] 현재 낮 {self.core.day_no}, 생존: {alive}\n"
                     f"'{pl.name}'로서 참가자 '{b.name}'에게 직접 말을 거세요: 그 사람의 앞선 "
                     f"발언/행동에서 수상하거나 앞뒤가 안 맞는 점 하나를 짚어 캐묻거나 의심하세요. "
-                    f"'{b.name}'의 이름을 부를 것. 한 문장(40자 안팎)으로 아주 짧게, 혼잣말/규칙 설명 금지.\n" + self._NO_PILE_ON)
+                    f"'{b.name}'의 이름을 부를 것. 한 문장(20자 안팎)으로 아주 짧게, 혼잣말/규칙 설명 금지.\n" + self._NO_PILE_ON)
         def fb(pl):
             return (f"[AI끼리 토론] '{a.name}'가 당신에게 의심을 던졌습니다. 최근 대화를 떠올려 "
                     f"'{pl.name}'로서 변명하거나 맞받아치며 '{a.name}'의 허점을 되짚으세요. "
-                    f"한 문장(40자 안팎)으로 아주 짧게.\n" + self._NO_PILE_ON)
+                    f"한 문장(20자 안팎)으로 아주 짧게.\n" + self._NO_PILE_ON)
         self.ai.say_one_async(a, fa)
         self.root.after(random_mod.randint(4500, 7000),
                         lambda: self.ai.say_one_async(b, fb)
                         if (self.mafia_active and self.core.phase == Phase.DAY and b.alive) else None)
 
-    _AI_UTT_MIN_GAP = 3.0        # v1.107 — AI 발언 사이 최소 간격(초). 글자 수만큼 더 늘어난다(사람이 치는 시간처럼)
-    _AI_UTT_STALE = 30.0         # 큐에서 이만큼 묵은 발언은 버린다(상황이 지나갔다)
+    _AI_UTT_MIN_GAP = 5.0        # v1.107 — AI 발언 사이 최소 간격(초). 글자 수만큼 더 늘어난다(사람이 치는 시간처럼)
+    _AI_UTT_STALE = 45.0         # 큐에서 이만큼 묵은 발언은 버린다(상황이 지나갔다)
 
     def _on_ai_utt(self, name, color, text):
         """AI 발언을 곧바로 띄우지 않고 큐에 넣어 천천히 하나씩 내보낸다(우르르 쏟아지지 않게)."""

@@ -16,7 +16,7 @@ def check(l, c):
 check("여러 줄이면 첫 줄만", to_one_line("안녕하세요.\n두번째 줄이에요.") == "안녕하세요.")
 long = "음 저는 민수님이 좀 수상해 보이는데요 왜냐하면 아까부터 계속 말이 없었고 그러다가 갑자기 영희님을 지목했거든요 ㅋㅋ 그래서 의심돼요"
 r = to_one_line(long)
-check("긴 문장은 70자 이내로 자름", 0 < len(r) <= 70)
+check("긴 문장은 40자 이내로 자름", 0 < len(r) <= 40)
 check("짧은 문장은 그대로", to_one_line("ㅋㅋ 그러게요~ 너무 몰아가는 거 아냐?") == "ㅋㅋ 그러게요~ 너무 몰아가는 거 아냐?")
 check("문장 끝에서 자름", to_one_line("첫 문장이에요. " + "가" * 80) == "첫 문장이에요.")
 
@@ -43,11 +43,11 @@ s = Stub()
 t0 = time.time()
 for i in range(3):
     s._on_ai_utt(f"AI{i}", "#fff", f"안녕 {i}")
-while time.time() - t0 < 14 and len(shown) < 3:
+while time.time() - t0 < 24 and len(shown) < 3:
     root.update(); time.sleep(0.02)
 check("3개 발언이 모두 표시됨", len(shown) == 3)
 gaps = [shown[i + 1][0] - shown[i][0] for i in range(len(shown) - 1)]
-check("발언 사이에 3초 이상 간격", all(g >= 2.9 for g in gaps))
+check("발언 사이에 5초 이상 간격", all(g >= 4.9 for g in gaps))
 check("순서 유지", [x[1] for x in shown] == ["AI0", "AI1", "AI2"])
 root.destroy()
 print("AI PACING", "PASSED" if ok_all else "FAILED"); sys.exit(0 if ok_all else 1)

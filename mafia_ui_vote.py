@@ -25,7 +25,7 @@ class MafiaVoteMixin:
             return (f"[침묵 킥스타트] 아무도 말하지 않으니 당신('{pl.name}')이 먼저 "
                     f"입을 열어 주세요. 가볍게 누구를 의심해볼지 물어보거나, "
                     f"방 분위기에 대해 짧게 던지세요. "
-                    f"한 문장(40자 안팎)으로 아주 짧게, 혼잣말/게임 규칙 설명 금지.")
+                    f"한 문장(20자 안팎)으로 아주 짧게, 혼잣말/게임 규칙 설명 금지.")
         # 모든 살아있는 AI에 발화 — freq 제한 해제(honor_freq=False)로 1~2명 강제 응답
         self.ai.say_async(factory, honor_freq=False)
 
@@ -1275,14 +1275,14 @@ class MafiaVoteMixin:
         def worker():
             txt = None
             try:
-                txt = (pl.say("[최후 변론] 당신은 처형 직전이다. 억울함을 호소하거나 반박하여 살아남아라. 두 문장 이내.", max_chars=140) or "").strip()
+                txt = (pl.say("[최후 변론] 당신은 처형 직전이다. 억울함을 호소하거나 반박하여 살아남아라. 두 문장 이내.", max_chars=100) or "").strip()
             except Exception:
                 txt = None
             if not txt:
                 import time as _sleep_mod
                 _sleep_mod.sleep(0.4)
                 try:
-                    txt = (pl.say("[최후 변론] 남은 시간이 얼마 없다. 간절히 호소하라. 두 문장 이내.", max_chars=140) or "").strip()
+                    txt = (pl.say("[최후 변론] 남은 시간이 얼마 없다. 간절히 호소하라. 두 문장 이내.", max_chars=100) or "").strip()
                 except Exception:
                     txt = None
             if not txt:
