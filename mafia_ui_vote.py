@@ -665,6 +665,7 @@ class MafiaVoteMixin:
         mode, data = self.core.tally_votes_full()
         if mode == "none":
             self.add_mafia_system("🗳 유효표 없음 — 전원 기권, 처형 무효.")
+            self._revote_used = False       # v1.113 — 안 되돌리면 다음 날 첫 동률이 재투표 없이 바로 무효가 된다
             return self.root.after(int(VOTE_REVEAL_DELAY * 1000), self._enter_night_sequence)
         if mode == "revote":
             if getattr(self, "_revote_used", False):
@@ -705,7 +706,7 @@ class MafiaVoteMixin:
                 if getattr(pl, "alive", False):
                     self.root.after(300 + i * 300,
                                     lambda p=pl, t=tied: self._ai_revote_fast(t, p))
-            self._revote_deadline = self.root.after((VOTE_WINDOW + 1) * 1000, self._force_revote_tally)
+            self._revote_deadline = self.root.after((VOTE_WINDOW + 3) * 1000, self._force_revote_tally)
             return
 
         # AI 전원 자동 재투표 — 동률 후보 중 (인격 성향 기반 즉시 결정)
@@ -721,7 +722,7 @@ class MafiaVoteMixin:
             return
         # 유저 무응답 대비 — 미투표 기권 + 강제 개표(멈춤 원천 차단). v1.112 — 화면에 보이는 카운트다운(VOTE_WINDOW초)과
         # 같은 시각에 맞춘다(예전엔 눈에 안 보이는 30초짜리 안전망뿐이라 "기권되는 타이머가 없다"고 느껴졌다).
-        self._revote_deadline = self.root.after((VOTE_WINDOW + 1) * 1000, self._force_revote_tally)
+        self._revote_deadline = self.root.after((VOTE_WINDOW + 3) * 1000, self._force_revote_tally)
         body = self._mafia_overlay_open("🔄 재투표 — 동률 후보 중 지목", w=360, h=None)
         my_revote_panel = getattr(self, "_mafia_overlay", None)
         tk.Label(body, text="동률 후보 중에서만 선택 가능 (기권 허용)",
@@ -743,7 +744,12 @@ class MafiaVoteMixin:
             rv_state["n"] -= 1
             if rv_state["n"] <= 0:
                 self.add_mafia_system("⏰ 재투표 시간 초과 — 기권 처리", local=True)
-                self._force_revote_tally()
+                if self._mafia_is_host():
+                    # v1.113 — 원격 참가자의 카운트다운은 패킷을 받은 시각부터 세므로 방장이 잠시(2초) 더 표를 받는다
+                    self._mafia_overlay_close()
+                    self.root.after(2000, self._force_revote_tally)
+                else:
+                    self._force_revote_tally()
                 return
             try:
                 rv_lbl.config(text=f"⏳ 남은 시간: {rv_state['n']}초 — 투표하지 않으면 기권 처리됩니다")
@@ -1278,7 +1284,7 @@ class MafiaVoteMixin:
             self.core.defense_yes = {}
             self.add_mafia_system(f"⚖ 피고인 '{name}' 님이 자리를 떠나 재판이 무효가 되었습니다.")
             self._show_verdict_visuals("void", name, None, 0, 0)
-            self._mafia_overlay_close()      # 남아 있는 찬반 팝업을 닫는다
+            self._close_defense_popup()      # 남아 있는 찬반 팝업만 닫는다(v1.113 — 다른 팝업은 건드리지 않음)
             self._mafia_broadcast("verdict", result="void", name=name, role=None, yes=0, no=0)
             winner = self.core.check_winner()
             if winner:

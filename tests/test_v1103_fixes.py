@@ -45,6 +45,7 @@ app._recruiting = False
 
 
 from mafia_net import encode
+from types import SimpleNamespace
 B=("127.0.0.1", B_PORT); X=("127.0.0.1", 61111); Y=("127.0.0.1", 61112)
 try:
     app._select_mafia_room(("mgame",)); root.update()
@@ -140,8 +141,53 @@ try:
     while time.time() - _t0 < 6 and getattr(app, "_mafia_overlay", None) is not None:
         root.update(); time.sleep(0.05)
     check("시간이 다 되면 팝업이 닫힘", getattr(app, "_mafia_overlay", None) is None)
+    _t1 = time.time()
+    while time.time() - _t1 < 3.5 and "방장" not in app.core.abstains:
+        root.update(); time.sleep(0.05)      # v1.113 — 방장은 화면 카운트다운이 끝난 뒤 2초 더 표를 받는다
     check("투표하지 않은 내가 기권 처리됨", "방장" in app.core.abstains)
     _mv.VOTE_WINDOW = 15
+    # v1.113) Opus 8차 리뷰 수정 확인
+    app.core.lobby_reset(); app.core.players.clear()
+    for n, a in (("방장", False), ("이팀장B", False), ("철수", True), ("영희", True), ("미나", True)):
+        app.core.join(n, is_ai=a)
+    for _n, _r in (("방장","citizen"),("이팀장B","citizen"),("철수","mafia"),("영희","citizen"),("미나","citizen")):
+        app.core.players[_n]["role"] = _r
+    app.core.phase = Phase.VOTE; app.mafia_active = True; app.mafia_host_mode = True; app.engine.name = "방장"
+    app._reset_ident(); app._ident()["이팀장B"] = B
+    _bc = []
+    app._mafia_broadcast = lambda t, **kw: _bc.append((t, kw))
+    # 3) 재투표 중 채팅 투표는 공개 발언으로 새지 않고 재투표 표가 됨
+    app._revote_tied = ["철수", "영희"]; app._revote_tally_scheduled = False
+    app._mafia_handle_user_text("투표 철수"); root.update()
+    check("재투표 중 채팅 투표가 표로 반영", app.core.votes.get("방장") == "철수")
+    check("공개 발언(user_say)으로 방송되지 않음", not any(t == "user_say" for t, kw in _bc))
+    app.core.votes.clear(); _bc.clear()
+    app._mafia_handle_user_text("투표 미나"); root.update()
+    check("동률 후보가 아닌 이름은 표가 되지도 방송되지도 않음", "방장" not in app.core.votes and not any(t == "user_say" for t, kw in _bc))
+    app._revote_tied = []; app._revote_tally_scheduled = True
+    # 4) 최후 변론 중 피고인이 아닌 사람의 발언은 방장이 받지 않음
+    app.core.set_defendant("철수")
+    _n0 = len(app.mafia_history)
+    app._on_mafia_proto_msg(encode("user_say", name="이팀장B", text="끼어들기야"), "이팀장B", B); root.update()
+    check("변론 중 비피고인의 발언은 표시·중계되지 않음", not any("끼어들기야" in r.get("text", "") for r in app.mafia_history[_n0:]))
+    app.core.defendant = None
+    # 6) 재투표가 유효표 없음으로 끝나면 _revote_used가 되돌려짐
+    app._revote_used = True; app.core.votes.clear(); app.core.abstains.clear()
+    app.__dict__.pop('_tally_full', None)
+    app._enter_night_sequence = lambda *a, **k: None
+    app._tally_full(); root.update()
+    check("유효표 없음 뒤 _revote_used가 초기화됨", app._revote_used is False)
+    # 1) 지난 밤에 늦게 온 AI 마피아 비밀방 답은 버려짐
+    import queue as _qq
+    app.core.phase = Phase.NIGHT; app.core.day_no = 3
+    posted = []
+    app._mafia_ai_post = lambda pl, reply: posted.append(reply)
+    app._mafia_ai_q = _qq.Queue()
+    app._mafia_ai_q.put((SimpleNamespace(name="철수", alive=True), "어제 밤의 답", 2))
+    app._mafia_ai_q.put((SimpleNamespace(name="철수", alive=True), "오늘 밤의 답", 3))
+    app._poll_mafia_ai_queue()
+    check("지난 밤의 답은 버리고 이번 밤의 답만 처리", posted == ["오늘 밤의 답"])
+    app._mafia_ai_poll_on = False
 finally:
     try: app._cancel_mafia_timer()
     except Exception: pass

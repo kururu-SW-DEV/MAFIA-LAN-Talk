@@ -115,6 +115,19 @@ class MafiaAIChatMixin:
             elif my_role == "police" and not self.core.police_report:
                 self.add_mafia_system("(안내) 경찰은 '조사 이름'으로 밤 행동을 알려야 합니다.", local=True)
             return
+        _mv = re.match(r"^(?:투표|지목|vote)\s+([^\s]+)$", text.strip())
+        if _mv and getattr(self, "_revote_tied", None) and not getattr(self, "_revote_tally_scheduled", True):
+            # v1.113 — 재투표 중의 채팅 투표: 동률 후보만 재투표 표로 받고, 그 밖의 이름은 공개 발언으로 새지 않게 안내만 한다
+            _tg = _mv.group(1).strip()
+            if _tg in self._revote_tied and _tg != getattr(self.engine, "name", None):
+                self._cast_revote(_tg)
+            else:
+                self.add_mafia_system("🔄 재투표 중입니다 — 동률 후보만 지목할 수 있어요: "
+                                      + ", ".join(self._revote_tied), local=True)
+            return
+        if _mv and self.core.phase == Phase.VOTE:
+            self.add_mafia_system("🗳 지금은 투표할 수 없는 단계입니다.", local=True)
+            return
         if self.core.phase == Phase.DAY:
             # '@이름'만 친 것은 멘션(AI 호출)이지 투표가 아니다 — 투표는 '투표 이름'으로만
             m = re.match(r"^(?:투표|지목|vote)\s+([^\s]+)$", text.strip())
@@ -550,7 +563,7 @@ class MafiaAIChatMixin:
         """AI 발언을 곧바로 띄우지 않고 큐에 넣어 천천히 하나씩 내보낸다(우르르 쏟아지지 않게)."""
         def _enqueue():
             q = self.__dict__.setdefault("_ai_utt_q", [])
-            q.append((time.time(), name, color, text))
+            q.append((time.time(), name, color, text, getattr(self, "_game_epoch", 0)))
             self._pump_ai_utt()
         self.root.after(0, _enqueue)
 
@@ -565,9 +578,9 @@ class MafiaAIChatMixin:
                 self._ai_utt_timer = self.root.after(int(wait * 1000) + 30, self._ai_utt_tick)
             return
         while q:
-            ts, name, color, text = q.pop(0)
-            if now - ts > self._AI_UTT_STALE:
-                continue
+            ts, name, color, text, epoch = q.pop(0)
+            if now - ts > self._AI_UTT_STALE or epoch != getattr(self, "_game_epoch", 0):
+                continue          # v1.113 — 묵었거나 지난 판의 발언
             if self._show_ai_utt(name, color, text):
                 self._ai_utt_next = time.time() + self._AI_UTT_MIN_GAP + min(3.0, len(text or "") * 0.05) \
                     + random_mod.random() * 1.5

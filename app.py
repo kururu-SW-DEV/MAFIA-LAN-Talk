@@ -2804,6 +2804,13 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
                 time.sleep(0.4)      # 전송 스레드가 첫 시도를 내보낼 시간
             except Exception:
                 pass
+        if (self.engine is not None and getattr(self, "_recruiting", False)
+                and getattr(self, "_recruiter_host", None) == getattr(self.engine, "name", None)):
+            try:                 # v1.113 — 모집 중에 방장이 꺼지면 참가자가 모집 상태에 갇히지 않게 취소를 알린다
+                self._mafia_broadcast("recruit_cancel", host=self.engine.name)
+                time.sleep(0.4)
+            except Exception:
+                pass
         if self.engine is not None:
             self.engine.stop()
         if self._notifier is not None:

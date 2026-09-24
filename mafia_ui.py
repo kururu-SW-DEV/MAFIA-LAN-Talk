@@ -313,6 +313,47 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
 
+    def _start_recruit_watch(self):
+        """v1.113 — 참가자 쪽: 모집 중인 방장이 접속 목록에서 사라지면(종료·오프라인) 모집 상태를 스스로 푼다."""
+        if getattr(self, "_recruit_watch_on", False):
+            return
+        self._recruit_watch_on = True
+        self._recruit_watch_lost = 0
+        self.root.after(10000, self._recruit_watch_tick)
+
+    def _recruit_watch_tick(self):
+        try:
+            host = getattr(self, "_recruiter_host", None)
+            me = getattr(self.engine, "name", None)
+            if (not getattr(self, "_recruiting", False) or not host or host == me
+                    or getattr(self, "mafia_active", False)):
+                self._recruit_watch_on = False
+                return
+            addr = self._mafia_peer_of(host)
+            p = self.engine.get_peer(addr) if addr else None
+            if p is None or time.time() - p.get("last", 0) > 60:
+                self._recruit_watch_lost += 1
+            else:
+                self._recruit_watch_lost = 0
+            if self._recruit_watch_lost >= 3:       # 약 30초 연속으로 방장이 안 보임
+                self._recruit_watch_on = False
+                self._recruiting = False
+                self._recruited_humans = []
+                self._my_joined = False
+                self._recruiter_host = None
+                self._in_game = True
+                if hasattr(self, "mafia_cancel_recruit_btn"):
+                    self.mafia_cancel_recruit_btn.pack_forget()
+                if hasattr(self, "mafia_start_btn"):
+                    self.mafia_start_btn.config(text="📢 참가자 모집", bg="#b91c1c", activebackground="#7f1d1d", state="normal")
+                self._mafia_pack_lobby_buttons()
+                self.mafia_phase_lbl.config(text="")
+                self.add_mafia_system("📢 모집 중이던 방장과의 연결이 끊겨 모집을 종료했습니다.", local=True)
+                return
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+        self.root.after(10000, self._recruit_watch_tick)
+
     def _mafia_notify_bystanders_started(self):
         """v1.101 — 모집 알림(recruit_start)은 LAN 전체로 나가지만 게임이 시작된 뒤에는 방송이 명단의 참가자에게만
         간다(v1.88). 그래서 참가 신청을 했다가 취소했거나 신청하지 않은 사람은 시작·종료·강제 종료 어느 것도
@@ -330,7 +371,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
                 if ip_port:
                     roster.add(tuple(ip_port))
             pkt = encode("recruit_cancel", host=me, started=True,
-                         players=[n for n in self.core.players.keys()])
+                         players=[n for n, p in self.core.players.items() if not p.get("is_ai")])
             if not pkt:
                 return
             with eng.plock:
@@ -509,6 +550,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
 
         self._mafia_disconnected = set()   # v1.42 — 새 판 시작, 접속 상태 추적 초기화
         self._ai_utt_q = []                 # v1.107 — 지난 판의 대기 중인 AI 발언을 버린다
+        self._game_epoch = getattr(self, "_game_epoch", 0) + 1     # v1.113 — 판 번호: 큐의 낡은 발언·후일담 구분
         self._mafia_left = set()
         self._mafia_disconnect_strikes = {}  # v1.87 — 연속 누락 횟수도 새 판마다 초기화
         self._mafia_start_disconnect_watch()
@@ -673,6 +715,12 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         self.add_mafia_system("🛑 방장이 게임을 강제로 종료했습니다.")
         self._mafia_broadcast("force_end")
         self._mafia_notify_bystanders_end("force")
+        self._ai_utt_q = []                 # v1.113 — 강제로 끝낸 판의 AI 발언이 로비에 계속 뜨지 않게
+        self._epilogue_until = 0
+        try:
+            self.ai.pending_talk = []
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
         self._cancel_mafia_timer()
         self._mafia_stop_disconnect_watch()
         self._mafia_room_close()

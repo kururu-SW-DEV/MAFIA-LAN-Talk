@@ -767,7 +767,10 @@ class MafiaNetMixin:
             # 마피아 팀 비밀 채팅 — 내가 마피아일 때만 표시(개인 쪽지로만 오지만 이중 방어)
             me_r = getattr(self.engine, "name", None)
             my_role = (self.core.players.get(me_r) or {}).get("role") or getattr(self, "_my_mafia_role", None)
-            if my_role == "mafia" and ev.get("text"):
+            _sinfo = self.core.players.get(ev.get("name")) or {}
+            _sender_ok = (not self._mafia_is_host()) or ev.get("name") == me_r or (
+                _sinfo.get("role") == "mafia" and _sinfo.get("alive", True))      # v1.113 — 방장은 보낸 사람이 마피아일 때만 표시
+            if my_role == "mafia" and ev.get("text") and _sender_ok:
                 self._mafia_room_append(ev.get("name") or "?", ev.get("text", ""))
             # v1.95 — 호스트는 클라이언트 마피아가 보낸 비밀 발언을 다른 사람 마피아 동료에게 중계한다
             _snd = ev.get("name")
@@ -814,6 +817,9 @@ class MafiaNetMixin:
             _info = (self.core.players.get(name) or {}) if getattr(self, "core", None) else {}
             if self.mafia_active and (not _info or _info.get("is_ai") or not _info.get("alive", True)):
                 return True        # 참가자가 아니거나 이미 사망한 사람의 발언은 버린다(AI 기억 오염 방지)
+            _dfd = getattr(self.core, "defendant", None)
+            if self._mafia_is_host() and _dfd and name != _dfd:
+                return True        # v1.113 — 최후 변론 중에는 피고인만 말한다(클라이언트 잠금이 늦게 걸려도 방장이 거른다)
             if say_text:
                 self.add_mafia_bubble(say_text, name)
                 if self._mafia_is_host() and getattr(self, "ai", None):
@@ -1058,7 +1064,8 @@ class MafiaNetMixin:
                 self._client_force_quit_end()
         elif t == "epilogue":
             _en, _et = ev.get("name"), ev.get("text")
-            if isinstance(_en, str) and isinstance(_et, str) and _et and not self._mafia_is_host():
+            if (isinstance(_en, str) and isinstance(_et, str) and _et and not self._mafia_is_host()
+                    and not getattr(self, "mafia_active", False)):
                 self.add_mafia_bubble(_et[:600], _en[:40])
         elif t == "spectate_end":
             self._spectating_host = None
@@ -1190,6 +1197,10 @@ class MafiaNetMixin:
             # 뜻이다. end/force_end 패킷이 유실돼도(3.6초 재시도 후 포기) 여기서 스스로 로비로 복귀한다.
             if getattr(self, "mafia_active", False) and not self._mafia_is_host():
                 self._client_reset_to_lobby()
+            self._epilogue_host = None          # v1.113 — 새 판의 모집이 시작되면 지난 판의 후일담·구경 알림 수신 자격을 없앤다
+            self._spectating_host = None
+            if host != getattr(self.engine, "name", None):
+                self._start_recruit_watch()
             if not getattr(self, "_recruiting", False) and host != getattr(self.engine, "name", None):
                 self._play_mafia_sound("recruit")      # v1.104 — 처음 받은 모집 알림에서만(참가 신청 회신으로 다시 오는 것은 제외)
             self._recruiting = True

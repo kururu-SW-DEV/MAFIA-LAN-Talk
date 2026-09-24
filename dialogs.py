@@ -136,6 +136,13 @@ class DialogsMixin:
         overlay.bind("<Button-1>", lambda e: "break")
         return overlay
 
+    def _ui_scale(self):
+        """v1.113 — Tk 글꼴은 화면 배율(125%·150%)만큼 커지는데 패널 폭은 고정 px이라 제목·라벨이 잘렸다. 96dpi 기준 대비 배율."""
+        try:
+            return max(1.0, min(1.6, float(self.root.tk.call("tk", "scaling")) / (96 / 72)))
+        except Exception:
+            return 1.0
+
     def _make_embed_dialog(self, title, width, height, rely=0.46):
         """Toplevel 대신 오버레이 + 패널로 뜨는 "큰" 임베드 다이얼로그의 뼈대.
         이름 변경/내 IP 같은 단순 모달(_embed_prompt_text/_embed_alert)과
@@ -146,6 +153,7 @@ class DialogsMixin:
         반환값: (panel, body, close) — body는 실제 내용을 넣을 프레임,
         close()는 패널+오버레이를 함께 정리하는 함수."""
         overlay = self._make_modal_overlay()
+        width = int(width * self._ui_scale()) if width else width
         panel = tk.Frame(self.root, bg=C_CARD, highlightthickness=1, highlightbackground=C_BORDER)
         # v1.51 — chat_wrap 기준 정렬(v1.48)은 사이드바 유무/렌더 타이밍에 따라 오히려
         # 반대쪽으로 치우쳐 보인다는 지적을 받아 되돌림 — 사이드바 여부와 무관하게
@@ -169,10 +177,11 @@ class DialogsMixin:
 
         head = tk.Frame(panel, bg=C_CARD)
         head.pack(fill="x", padx=16, pady=(14, 0))
-        tk.Label(head, text=title, bg=C_CARD, fg=C_TEXT, font=FONT_HEAD, anchor="w").pack(
-            side="left")
+        # v1.113 — ✕를 먼저 배치해야 제목이 길어도 닫기 버튼이 밀려나지 않는다. 제목은 남은 폭에서 줄바꿈한다.
         self._btn(head, "✕", _close, C_CARD, C_MUTE, C_HOVER, font=FONT_SM, padx=8, pady=2).pack(
             side="right")
+        tk.Label(head, text=title, bg=C_CARD, fg=C_TEXT, font=FONT_HEAD, anchor="w", justify="left",
+                 wraplength=max(120, (width or 380) - 80)).pack(side="left", fill="x", expand=True)
 
         body = tk.Frame(panel, bg=C_CARD)
         body.pack(fill="both", expand=True)

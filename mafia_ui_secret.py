@@ -344,7 +344,7 @@ class MafiaSecretMixin:
                     reply = f"오늘은 {_rr.choice(targets)} 어때?"
                 else:
                     reply = _rr.choice(self._MAFIA_AI_FALLBACK)
-            self._mafia_ai_q.put((pl, reply))    # UI 반영은 메인스레드 폴러가 한다
+            self._mafia_ai_q.put((pl, reply, getattr(self.core, 'day_no', 0)))    # UI 반영은 메인스레드 폴러가 한다(몇 번째 밤의 답인지 함께)
         except Exception as e:
             import applog
             applog.log("mafia_ai_worker", exc=e)
@@ -363,7 +363,9 @@ class MafiaSecretMixin:
     def _poll_mafia_ai_queue(self):
         try:
             while True:
-                pl, reply = self._mafia_ai_q.get_nowait()
+                pl, reply, _night = self._mafia_ai_q.get_nowait()
+                if _night != getattr(self.core, 'day_no', 0):
+                    continue       # v1.113 — 지난 밤에 늦게 도착한 답: 다음 밤의 목표·비밀방을 바꾸지 않게 버린다
                 self._mafia_ai_post(pl, reply)
         except Exception as e:
             import queue as _q
@@ -430,6 +432,8 @@ class MafiaSecretMixin:
         self._revote_tied = []
         self._revote_tally_scheduled = True
         self._ghost_alone_told = set()
+        import queue as _gq
+        self._ghost_ui_q = _gq.Queue()      # v1.113 — 닫힌 채 쌓여 있던 지난 판 AI의 말이 다음 판 유령방에 뜨지 않게
         self._revote_used = False      # v1.92 — 재투표 도중 끝난 판의 값이 다음 판 첫 동률을 무효로 만들었다
 
     def _ghost_roster_text(self):
@@ -654,7 +658,7 @@ class MafiaSecretMixin:
             return
         me = getattr(self.engine, "name", None)
         for n, p in list(self.core.players.items()):
-            if p.get("is_ai") or p.get("alive", True) or n == speaker:
+            if p.get("is_ai") or p.get("alive", True) or n == speaker or n in (getattr(self, "_mafia_left", None) or ()):
                 continue
             if n == me:
                 self._append_ghost(f"👻 {speaker}: {text}")
@@ -767,7 +771,8 @@ class MafiaSecretMixin:
                         del _l[:-30]
                     me_h = getattr(self.engine, "name", None)
                     for _n, _p in list(self.core.players.items()):
-                        if _p.get("is_ai") or _p.get("alive", True) or _n == me_h:
+                        if (_p.get("is_ai") or _p.get("alive", True) or _n == me_h
+                                or _n in (getattr(self, "_mafia_left", None) or ())):
                             continue
                         try:               # 한 사람에게 보내다 실패해도 다른 사망자에게는 계속 보낸다
                             self._mafia_send_private(_n, "ghost_say", name=ai_name, text=text)
