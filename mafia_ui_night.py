@@ -205,7 +205,7 @@ class MafiaNightMixin:
         with self.core.lock:
             if results.get("kill") and not self.core.night_target:
                 self.core.set_night_target(results["kill"])
-                self.add_mafia_system("(무인 밤 행동 적용) 마피아의 선택이 접수되었습니다.""(무인 밤 행동 적용) 마피아의 선택이 접수되었습니다.", local=True)
+                pass    # v1.103 — 방장 화면에 '마피아의 선택이 접수'를 띄우면 AI 마피아 생존 여부가 새어 나간다
             # 다수 마피아 합의: 각 마피아의 개별 지목 1:1 반영
             multi = results.get("multi", [])
             multi_pairs = results.get("multi_pairs", [])
@@ -237,13 +237,14 @@ class MafiaNightMixin:
             save_t = results.get("save")
             if save_t and not self.core.night_saved:
                 if self.core.doctor_protect(save_t):
-                    self.add_mafia_system("(무인 밤 행동 적용) 의사의 선택이 접수되었습니다.""(무인 밤 행동 적용) 의사의 선택이 접수되었습니다.", local=True)
+                    pass    # v1.103 — AI 의사 생존 여부가 방장에게 새지 않도록 안내하지 않는다
                 else:
-                    self.add_mafia_system("(무인 밤 행동 적용) 의사의 연속 보호 시도가 규칙에 따라 제한되었습니다.""(무인 밤 행동 적용) 의사의 연속 보호 시도가 규칙에 따라 제한되었습니다.", local=True)
+                    pass
 
     def _enter_night_sequence(self):
         if not self.mafia_active:
             return
+        self._vote_window = False      # v1.103 — 재투표가 다시 동률이면 _tally_and_reveal을 거치지 않아 True로 남았다
         self._tally_scheduled = False
         self._tally_in_progress = False
         self._defense_in_progress = False
@@ -459,7 +460,7 @@ class MafiaNightMixin:
                 or not info.get("alive", False) or self.core.phase != Phase.NIGHT):
             try:
                 applog.log("mafia_night_action_rejected", detail=f"actor={actor} claimed={role} "
-                           f"real={info.get('role')} alive={info.get('alive')} phase={self.core.phase}")
+                           f"alive={info.get('alive')} phase={self.core.phase}")
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
             notify("⚠ 지금은 그 밤 행동을 할 수 없습니다")

@@ -134,9 +134,9 @@ sys_msgs = []
 _orig_add_sys = app.add_mafia_system
 
 
-def _spy_add_sys(text):
+def _spy_add_sys(text, local=False):
     sys_msgs.append(text)
-    return _orig_add_sys(text)
+    return _orig_add_sys(text, local=local)
 
 
 app.add_mafia_system = _spy_add_sys

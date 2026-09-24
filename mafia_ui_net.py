@@ -41,8 +41,12 @@ class MafiaNetMixin:
                         targets.add(ip_port)
                 peers = list(targets)
             else:
+                # v1.103 — 대화 기록·정적 등록으로 목록에 남은 오프라인 항목까지 보내면 주소마다 전송 스레드가
+                # 3.6초씩 재시도해 로비 채팅 한 줄마다 낭비가 생긴다. 최근에 소식이 있었던 상대에게만 보낸다.
+                _now = time.time()
                 with eng.plock:
-                    peers = list(eng.peers.keys())
+                    peers = [k for k, v in eng.peers.items()
+                             if v.get("static") or _now - v.get("last", 0) < PEER_TIMEOUT]
             for ip_port in peers:
                 ip, port = ip_port
                 try:
@@ -222,6 +226,7 @@ class MafiaNetMixin:
         self._mafia_disconnected = set()      # v1.95 — 이전 판에 방장으로서 쌓은 끊김 목록이 남으면 그 사람들에게 방송을 안 보냈다
         self._mafia_disconnect_strikes = {}
         self._mafia_left = set()
+        self._vote_rid = None        # v1.103 — 다른 방장의 판에서 옛 투표판 번호가 실려 첫 표가 버려지지 않게
         try:
             self._cancel_mafia_timer()
             self._cancel_vote_popup()      # v1.100 — 남아 있던 재투표 기한 등이 나중에 다른 팝업을 닫지 않게
@@ -457,7 +462,7 @@ class MafiaNetMixin:
             applog.swallowed(_swallow_e)
             return False
 
-    def _sender_is(self, claimed, sender_name, peer=None):
+    def _sender_is(self, claimed, sender_name, peer=None, bind=True):
         """본문이 주장하는 이름(claimed)이 실제 송신자인지.
 
         패킷 본문의 이름은 보내는 사람이 마음대로 적을 수 있어(엔진도 그대로 읽는다) 그것만 믿으면
@@ -484,7 +489,7 @@ class MafiaNetMixin:
                 ok = pk is not None and tuple(pk) == key
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
-        if ok:
+        if ok and bind:
             ident[claimed] = key               # 처음 확인된 접속 주소에 이름을 묶는다
         return ok
 
@@ -625,7 +630,7 @@ class MafiaNetMixin:
                 # 받는 쪽은 이름 비교만으로 user_say·mafia_say를 받아, 구경꾼이 참가자 이름으로 가짜 채팅·
                 # 마피아 비밀방 발언을 띄울 수 있었다 — 진행 중인 판에서는 방장이 보낸 것만 받는다.
                 return False
-            if t == "mafia_say" and host and self._sender_is(host, sender_name, peer):
+            if t == "mafia_say" and not am_host and host and self._sender_is(host, sender_name, peer):
                 return True             # 방장이 중계하는 AI 마피아 발언·목표 안내
             if t == "recruit_join" and self._ident().get(ev.get(field)) is None \
                     and self._mafia_name_ambiguous(ev.get(field)):
@@ -652,7 +657,10 @@ class MafiaNetMixin:
                     # 전부 "사칭"으로 거부되다 끊김 처리로 사망했다 — 토큰이 맞으면 새 주소로 다시 묶는다.
                     if peer is not None and self._ident().get(ev.get(field)) not in (None, tuple(peer)):
                         self._ident()[ev.get(field)] = tuple(peer)
-            return self._sender_is(ev.get(field), sender_name, peer)
+            # v1.103 — 이름↔주소 묶음은 참가 신청(중복 이름 검사를 통과한 recruit_join)에서만 만든다. 로비 채팅 같은
+            # 다른 이벤트가 먼저 이름을 묶어, 진짜 그 사람의 참가 신청이 사칭으로 거부되고 공격자의 신청이
+            # 통과하던 구멍이 있었다.
+            return self._sender_is(ev.get(field), sender_name, peer, bind=(t == "recruit_join" or not am_host))
         return True
 
     def _broadcast_vote_done(self, voter, target):
@@ -685,6 +693,8 @@ class MafiaNetMixin:
             try:
                 # v1.100 — 거부된 패킷마다 UI 스레드에서 파일에 쓰던 것을 (종류, 송신자)별로 10초에 한 번만 기록한다
                 _rl = self.__dict__.setdefault("_rej_log_ts", {})
+                if len(_rl) > 200:
+                    _rl.clear()      # v1.103 — 송신자가 정하는 이름이 키라 무한히 자랄 수 있다
                 _now = time.time()
                 if _now - _rl.get((t, sender_name), 0) > 10:
                     _rl[(t, sender_name)] = _now
@@ -899,7 +909,18 @@ class MafiaNetMixin:
                                 self.core.join(nm, is_ai=is_ai)
                         self.core.phase = Phase.DAY
                         self.core.day_no = 1
-                        self.root.after(0, self._client_start_day_countdown)
+                        # v1.103 — 놓친 start를 다시 받는 경우(hb 재요청): 방장이 지금 진행 상태를 함께 보낸다
+                        _al = ev.get("alive")
+                        if isinstance(_al, dict):
+                            for _n, _v in _al.items():
+                                if _n in self.core.players and _v is False:
+                                    self.core.players[_n]["alive"] = False
+                        if ev.get("phase") in (Phase.NIGHT, Phase.VOTE):
+                            self.core.phase = ev.get("phase")
+                        if isinstance(ev.get("day_no"), int) and 1 <= ev.get("day_no") <= 99:
+                            self.core.day_no = ev.get("day_no")
+                        if self.core.phase == Phase.DAY:
+                            self.root.after(0, self._client_start_day_countdown)
                     me = getattr(self.engine, "name", None)
                     my_role = getattr(self, "_my_mafia_role", None)
                     if my_role and me in self.core.players:
@@ -1096,7 +1117,9 @@ class MafiaNetMixin:
                 if ev.get("nostart") and isinstance(who, str) and who in self.core.players                         and not self.core.players[who].get("is_ai") and self.mafia_active                         and who not in (getattr(self, "_mafia_left", None) or ()):
                     # v1.100 — 시작 패킷(start)을 놓쳐 게임 화면 없이 hb만 받는 참가자에게 명단을 다시 보낸다
                     self._mafia_send_private(who, "start", players=[
-                        {"name": n, "is_ai": p.get("is_ai", False)} for n, p in self.core.players.items()])
+                        {"name": n, "is_ai": p.get("is_ai", False)} for n, p in self.core.players.items()],
+                        alive={n: bool(p.get("alive", True)) for n, p in self.core.players.items()},
+                        phase=self.core.phase, day_no=self.core.day_no)
                 self._resend_role_dm(who)
         elif t == "hb":
             # v1.100 — 방장은 게임 중에만 hb를 보낸다. 내가 게임 참가자인데(모집 알림·참가 신청을 거쳤는데)
@@ -1217,6 +1240,11 @@ class MafiaNetMixin:
                 )
             self.add_mafia_system(f"📋 참가자 명단 갱신 ({len(self._recruited_humans)}명): {', '.join(self._recruited_humans)}")
         elif t == "recruit_cancel":
+            if ev.get("started"):
+                if getattr(self.engine, "name", None) in self._name_list(ev.get("players")):
+                    return True     # v1.103 — 명단에 내가 있다(같은 프로세스가 다른 주소로도 보여 구경꾼으로 잘못 분류됨): 무시
+                if getattr(self, "mafia_active", False) and not self._mafia_is_host():
+                    self._client_reset_to_lobby()     # v1.103 — 지난 판 종료를 못 받은 채 남은 mafia_active를 정리한다
             self._recruiting = False
             self._recruited_humans = []
             self._my_joined = False
@@ -1367,6 +1395,11 @@ class MafiaNetMixin:
                     # 채팅이 이 안내로 도배됨) — 원래 자리로 되돌린다.
                     known.discard(name)
                     strikes.pop(name, None)
+                    if not p.get("alive", True):
+                        # v1.103 — 끊긴 사이 사망 처리된 사람은 자기 사망 통보를 못 받아 스스로 살아 있다고 여기고
+                        # 투표·밤 행동을 계속했다 — 다시 이어졌을 때 사망 사실과 진행 상태를 개인 쪽지로 알린다.
+                        self._mafia_send_private(name, "death", name=name)
+                        self._mafia_send_private(name, "sys", text="💀 접속이 끊긴 사이 사망 처리되었습니다 — 이번 판은 관전만 할 수 있습니다.")
                     if p.get("alive", True):
                         self.add_mafia_system(f"✅ {name}님이 다시 연결되었습니다.")
                     else:
@@ -1392,67 +1425,6 @@ class MafiaNetMixin:
                 except Exception as _swallow_e:
                     applog.swallowed(_swallow_e)
                 setattr(self, attr, None)
-
-    def _host_receive_vote_cast(self, voter, target):
-        """v1.61 — 호스트 전용: 원격 참가자가 보낸 낮 투표(vote_cast)를 실제
-        core에 반영하고, 다른 모든 참가자에게 진행 상황을 재동기화한다."""
-        if not self._mafia_is_host() or not voter or voter not in self.core.players:
-            return
-        if not (self.core.players.get(voter) or {}).get("alive", True):
-            return
-        revote = bool(getattr(self, "_revote_tied", None)) and not getattr(self, "_revote_tally_scheduled", True)
-        if revote:
-            # 재투표 중에는 core.phase가 DAY가 아니라 cast_vote가 거절하므로
-            # 호스트 자신의 _cast_revote와 똑같이 직접 기록한다(동률 후보만 허용).
-            if target and target not in self._revote_tied:
-                return
-            if target:
-                self.core.votes[voter] = target
-            else:
-                self.core.cast_abstain(voter)
-            ok = True
-        else:
-            ok = self.core.cast_vote(voter, target) if target else self.core.cast_abstain(voter)
-        if not ok:
-            # 개표가 이미 시작됐거나 대상이 사망한 경우 등 — 조용히 버리면 투표자는 "확인이 없다"는 엉뚱한 경고(버전 불일치)를 본다
-            if voter != getattr(self.engine, "name", None):
-                self._mafia_send_private(voter, "sys",
-                                         text="✅ 방장이 내 투표를 받았지만 반영하지 못했습니다 (이미 개표가 시작되었거나 대상이 사망)")
-            return
-        _pd, _pt = self._vote_progress_counts()
-        if target:
-            self.add_mafia_system(f"🗳 {voter}님 투표 접수 완료 (익명 개표) · 진행률 {_pd}/{_pt}")
-        else:
-            self.add_mafia_system(f"🗳 {voter} 기권 접수 · 진행률 {_pd}/{_pt}")
-        self._refresh_vote_progress_label()
-        if voter != getattr(self.engine, "name", None):
-            self._mafia_send_private(voter, "sys", text="✅ 방장이 내 " + ("투표를 접수했습니다 (익명)" if target else "기권을 접수했습니다"))
-        self._broadcast_vote_done(voter, target)
-        if revote:
-            self._check_revote_done()
-        elif self.core.all_voted():
-            self._schedule_tally(300)
-
-    def _host_receive_defense_vote(self, voter, name, yes):
-        """v1.61 — 호스트 전용: 원격 참가자의 찬반 표를 실제 core에 반영하고,
-        전원 완료면 호스트가 개표한다(개표 판정은 호스트 전용 권한)."""
-        if not self._mafia_is_host() or not voter or voter not in self.core.players:
-            return
-        _late = "✅ 방장이 내 찬반 표를 받았지만 반영하지 못했습니다 (이미 끝난 재판이거나 투표 자격 없음)"
-        if getattr(self.core, "defendant", None) != name:
-            if voter != getattr(self.engine, "name", None):
-                self._mafia_send_private(voter, "sys", text=_late)
-            return   # 이미 끝난 재판에 늦게 도착한 표
-        if not (self.core.players.get(voter) or {}).get("alive", True):
-            if voter != getattr(self.engine, "name", None):
-                self._mafia_send_private(voter, "sys", text=_late)
-            return
-        self.core.cast_defense_vote(voter, bool(yes))
-        self.add_mafia_system(f"⚖ {voter}님 찬반 표 접수 (익명) · {self._defense_progress_text()}")
-        self._broadcast_defense_progress(voter)
-        if voter != getattr(self.engine, "name", None):
-            self._mafia_send_private(voter, "sys", text="✅ 방장이 내 찬반 표를 접수했습니다 (익명)")
-        self._maybe_resolve_defense(name)
 
     def _sync_ai_alive(self):
         """v1.11 — core의 alive 정보를 PlayerAgent.alive에 동기화.

@@ -328,11 +328,14 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
                 ip_port = self._mafia_peer_of(n)
                 if ip_port:
                     roster.add(tuple(ip_port))
-            pkt = encode("recruit_cancel", host=me, started=True)
+            pkt = encode("recruit_cancel", host=me, started=True,
+                         players=[n for n in self.core.players.keys()])
             if not pkt:
                 return
             with eng.plock:
-                others = [k for k in eng.peers.keys() if tuple(k) not in roster]
+                _now = time.time()
+                others = [k for k, v in eng.peers.items()
+                          if tuple(k) not in roster and (v.get("static") or _now - v.get("last", 0) < PEER_TIMEOUT)]
             self._mafia_bystanders = [tuple(k) for k in others]     # v1.101 — 종료·강제 종료도 알려 준다
             for ip, port in others:
                 try:

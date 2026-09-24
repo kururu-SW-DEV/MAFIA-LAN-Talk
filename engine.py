@@ -1273,6 +1273,11 @@ class Engine:
             changed = True
         if changed:
             self._emit({"ev": "peer"})
+        with self.plock:            # v1.103 — 사라진 상대의 ping 기록을 정리한다(계속 자라던 dict)
+            _alive_keys = set(self.peers.keys())
+        if len(self._probe_next) > len(_alive_keys) + 32:
+            self._probe_next = {k: v for k, v in self._probe_next.items() if k in _alive_keys}
+            self._probe_fail = {k: v for k, v in self._probe_fail.items() if k in _alive_keys}
 
         # 미완료 파일 전송 세션(120초 경과) 메모리 정리
         with self.tlock:

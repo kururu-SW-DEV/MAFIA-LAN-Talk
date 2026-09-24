@@ -525,6 +525,10 @@ class MafiaViewMixin:
         """찬반 투표 결과 확정 시 유죄 처형 vs 무죄 방면 시네마틱 컷신."""
         self._unlock_defense_entry()
         if result == "void":
+            try:
+                self._mafia_overlay_close()      # v1.103 — 찬반 팝업이 남아 눌리는 상태로 떠 있지 않게
+            except Exception as _swallow_e:
+                applog.swallowed(_swallow_e)
             return          # v1.100 — 피고인이 자리를 떠나 무효가 된 재판은 연출 없이 넘어간다
         if result == "executed":
             self._mafia_show_splash(

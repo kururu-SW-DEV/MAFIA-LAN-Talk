@@ -643,6 +643,8 @@ class MafiaVoteMixin:
         여기 있던 구 단일개표 경로(core.tally_votes/execute 직접 호출)는 도달
         불가능한 죽은 코드였다 — core.py의 구 메서드들과 함께 정리."""
         self._tally_scheduled = False
+        if not getattr(self, "mafia_active", False):
+            return          # v1.103 — 예약된 뒤(300ms) 판이 끝났으면(나가기로 승패 결정 등) 로비 상태를 건드리지 않는다
         if getattr(self, "_tally_in_progress", False):
             return
         self._tally_in_progress = True
@@ -1178,7 +1180,11 @@ class MafiaVoteMixin:
                 applog.swallowed(_swallow_e)
         if not me:
             return
-        self.core.cast_defense_vote(me, yes)
+        if self._mafia_is_host() and not self.core.cast_defense_vote(me, yes):
+            self._mafia_overlay_close()      # v1.103 — 이미 끝난 재판(무효 등)이면 접수 안내를 방송하지 않는다
+            return
+        if not self._mafia_is_host():
+            self.core.cast_defense_vote(me, yes)
         # v1.47 — 찬반 투표도 본투표와 동일하게 완전 익명(누가 찬성/반대인지 비공개).
         self._mafia_overlay_close()
         if self._mafia_is_host():
@@ -1221,6 +1227,7 @@ class MafiaVoteMixin:
             self.core.defense_yes = {}
             self.add_mafia_system(f"⚖ 피고인 '{name}' 님이 자리를 떠나 재판이 무효가 되었습니다.")
             self._show_verdict_visuals("void", name, None, 0, 0)
+            self._mafia_overlay_close()      # 남아 있는 찬반 팝업을 닫는다
             self._mafia_broadcast("verdict", result="void", name=name, role=None, yes=0, no=0)
             winner = self.core.check_winner()
             if winner:
@@ -1308,7 +1315,74 @@ class MafiaVoteMixin:
                     self._maybe_resolve_defense(defendant)
             elif getattr(self, "_revote_tied", None) and not getattr(self, "_revote_tally_scheduled", True):
                 self._check_revote_done()
-            elif getattr(self, "_vote_window", False) and self.core.all_voted():
+            elif (getattr(self, "_vote_window", False) and self.core.phase == Phase.DAY
+                  and self.core.all_voted()):
                 self._schedule_tally(300)
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
+
+    def _host_receive_vote_cast(self, voter, target):
+        """v1.61 — 호스트 전용: 원격 참가자가 보낸 낮 투표(vote_cast)를 실제
+        core에 반영하고, 다른 모든 참가자에게 진행 상황을 재동기화한다."""
+        if not self._mafia_is_host() or not voter or voter not in self.core.players:
+            return
+        if not (self.core.players.get(voter) or {}).get("alive", True):
+            if voter != getattr(self.engine, "name", None):
+                self._mafia_send_private(voter, "sys", text="✅ 방장이 내 투표를 받았지만 반영하지 못했습니다 (사망 처리됨)")
+            return
+        revote = bool(getattr(self, "_revote_tied", None)) and not getattr(self, "_revote_tally_scheduled", True)
+        if revote:
+            # 재투표 중에는 core.phase가 DAY가 아니라 cast_vote가 거절하므로
+            # 호스트 자신의 _cast_revote와 똑같이 직접 기록한다(동률 후보만 허용).
+            if target and target not in self._revote_tied:
+                return
+            if target:
+                self.core.votes[voter] = target
+            else:
+                self.core.cast_abstain(voter)
+            ok = True
+        else:
+            ok = self.core.cast_vote(voter, target) if target else self.core.cast_abstain(voter)
+        if not ok:
+            # 개표가 이미 시작됐거나 대상이 사망한 경우 등 — 조용히 버리면 투표자는 "확인이 없다"는 엉뚱한 경고(버전 불일치)를 본다
+            if voter != getattr(self.engine, "name", None):
+                self._mafia_send_private(voter, "sys",
+                                         text="✅ 방장이 내 투표를 받았지만 반영하지 못했습니다 (이미 개표가 시작되었거나 대상이 사망)")
+            return
+        _pd, _pt = self._vote_progress_counts()
+        if target:
+            self.add_mafia_system(f"🗳 {voter}님 투표 접수 완료 (익명 개표) · 진행률 {_pd}/{_pt}")
+        else:
+            self.add_mafia_system(f"🗳 {voter} 기권 접수 · 진행률 {_pd}/{_pt}")
+        self._refresh_vote_progress_label()
+        if voter != getattr(self.engine, "name", None):
+            self._mafia_send_private(voter, "sys", text="✅ 방장이 내 " + ("투표를 접수했습니다 (익명)" if target else "기권을 접수했습니다"))
+        self._broadcast_vote_done(voter, target)
+        if revote:
+            self._check_revote_done()
+        elif self.core.all_voted():
+            self._schedule_tally(300)
+
+    def _host_receive_defense_vote(self, voter, name, yes):
+        """v1.61 — 호스트 전용: 원격 참가자의 찬반 표를 실제 core에 반영하고,
+        전원 완료면 호스트가 개표한다(개표 판정은 호스트 전용 권한)."""
+        if not self._mafia_is_host() or not voter or voter not in self.core.players:
+            return
+        _late = "✅ 방장이 내 찬반 표를 받았지만 반영하지 못했습니다 (이미 끝난 재판이거나 투표 자격 없음)"
+        if getattr(self.core, "defendant", None) != name:
+            if voter != getattr(self.engine, "name", None):
+                self._mafia_send_private(voter, "sys", text=_late)
+            return   # 이미 끝난 재판에 늦게 도착한 표
+        if not (self.core.players.get(voter) or {}).get("alive", True):
+            if voter != getattr(self.engine, "name", None):
+                self._mafia_send_private(voter, "sys", text=_late)
+            return
+        if not self.core.cast_defense_vote(voter, bool(yes)):
+            if voter != getattr(self.engine, "name", None):
+                self._mafia_send_private(voter, "sys", text=_late)
+            return           # v1.103 — 반영되지 않은 표(피고인 본인 등)를 '접수'로 방송하지 않는다
+        self.add_mafia_system(f"⚖ {voter}님 찬반 표 접수 (익명) · {self._defense_progress_text()}")
+        self._broadcast_defense_progress(voter)
+        if voter != getattr(self.engine, "name", None):
+            self._mafia_send_private(voter, "sys", text="✅ 방장이 내 찬반 표를 접수했습니다 (익명)")
+        self._maybe_resolve_defense(name)

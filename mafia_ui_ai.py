@@ -416,6 +416,8 @@ class MafiaAIChatMixin:
         """v1.30 — 유저 협박 발언에 대한 AI 불쾌 반응 발화(1명, 1회).
         LLM 없이 인격 톤 문구 즉결 + AI 기억에 '협박' 사실 적립(투표/찬반 참조)."""
         import random as _rr2
+        if not getattr(self, "mafia_active", False) or not getattr(pl, "alive", False):
+            return          # v1.103 — 600ms 예약 사이에 판이 끝났거나 그 AI가 죽었으면 반응하지 않는다
         try:
             me_u = speaker or getattr(self.engine, "name", "")
             lines = [
@@ -426,7 +428,7 @@ class MafiaAIChatMixin:
                 f"겁으로 말리려는 거면 됐어요. 우리 마음은 안 움직여요.",
             ]
             t = _rr2.choice(lines)
-            self.add_mafia_bubble(t, pl.name)
+            self.add_mafia_ai(pl.name, t)      # v1.103 — add_mafia_bubble은 방장 화면에만 떠서 참가자에게는 안 보였다
             # AI 기억 적립 — 이후 발화/투표 토대로 사용
             if not hasattr(pl, "memory") or pl.memory is None:
                 pl.memory = []
