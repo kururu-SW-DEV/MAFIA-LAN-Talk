@@ -610,6 +610,8 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
     def _on_game_end(self, winner):
         self._mafia_room_close()
         self._reset_ghost_state()
+        self._ghost_ui_open = False
+        self._mafia_overlay_close()     # v1.105 — 열려 있던 유령 채팅방이 종료 안내·후일담 채팅을 가리지 않게
         if self._mafia_is_host():
             self._mafia_broadcast("end", winner=winner, roles={
                 n: p.get("role") for n, p in self.core.players.items()})

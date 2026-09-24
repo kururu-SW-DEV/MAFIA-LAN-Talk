@@ -450,6 +450,8 @@ class MafiaSecretMixin:
     def _open_ghost_chat(self):
         """사망자끼리만 진실(직업) 알고 수다 떠는 비공개 유령 채팅방.
         생존자에게는 전혀 노출되지 않는 별도 overlay. 대화는 게임이 끝날 때까지 누적되어, 닫았다가 다시 열어도 이어진다."""
+        if not getattr(self, "mafia_active", False):
+            return      # v1.105 — 게임이 이미 끝났다: 늦게 예약된 호출이 빈 명단에 "사망자가 아직 없습니다"를 띄우지 않게
         me = getattr(self.engine, "name", None)
         if not me or self.core.players.get(me, {}).get("alive", False):
             self.add_mafia_system("👻 유령 채팅방은 사망자 전용입니다 — 지금은 생존 중이라 들어올 수 없습니다", local=True)

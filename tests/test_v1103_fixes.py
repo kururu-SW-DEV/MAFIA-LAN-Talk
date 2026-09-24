@@ -84,6 +84,22 @@ try:
     check("명단에 내가 있으면 구경꾼 처리를 무시(게임 유지)", app.mafia_active is True and app._recruiter_host == "다른방장")
     app._on_mafia_proto_msg(encode("recruit_cancel", host="다른방장", started=True, players=["x"]), "다른방장", B)
     check("명단에 없고 옛 mafia_active가 남았으면 로비로 복귀", app.mafia_active is False)
+    # v1.105) 게임 종료 시 유령 채팅방 정리 + 종료 뒤 늦은 유령방 호출은 조용히 무시
+    app.core.lobby_reset(); app.core.players.clear()
+    for n, a in (("방장", False), ("이팀장B", False), ("철수", True), ("영희", True)):
+        app.core.join(n, is_ai=a)
+    for _n, _r in (("방장","citizen"),("이팀장B","citizen"),("철수","mafia"),("영희","citizen")):
+        app.core.players[_n]["role"] = _r
+    app.core.players["방장"]["alive"] = False
+    app.core.phase = Phase.NIGHT; app.mafia_active = True; app.mafia_host_mode = True; app.engine.name = "방장"
+    app._open_ghost_chat(); root.update()
+    check("사전 조건: 유령 채팅방 오버레이가 열림", getattr(app, "_mafia_overlay", None) is not None)
+    app._on_game_end("mafia"); root.update()
+    check("게임 종료 시 유령 채팅방 오버레이가 닫힘", getattr(app, "_mafia_overlay", None) is None)
+    n = len(app.mafia_history)
+    app._open_ghost_chat(); root.update()
+    check("종료 뒤 늦은 유령방 호출은 '사망자가 아직 없습니다'를 띄우지 않음",
+          not any("사망자가 아직 없습니다" in r.get("text", "") for r in app.mafia_history[n:]))
 finally:
     try: app._cancel_mafia_timer()
     except Exception: pass

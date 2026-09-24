@@ -142,6 +142,8 @@ class MafiaNetMixin:
         label = "시민" if winner == "citizen" else "마피아"
         self._mafia_room_close()
         self._reset_ghost_state()
+        self._ghost_ui_open = False
+        self._mafia_overlay_close()     # v1.105 — 열려 있던 유령 채팅방 정리
         self._play_mafia_sound("citizen_win" if winner == "citizen" else "mafia_win")
         self.add_mafia_system(f"⚖ 게임 종료 — {label} 팀 승리!")
         if roles and isinstance(roles, dict):
