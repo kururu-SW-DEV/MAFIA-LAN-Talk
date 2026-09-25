@@ -68,7 +68,7 @@ class MafiaVoteMixin:
             if now_t - getattr(self, "_last_ai_banter", 0) >= 11:
                 self._last_ai_banter = now_t
                 if random_mod.random() < 0.7:
-                    if not self._ai_mafia_bluff():      # 마피아 AI의 거짓 커밍아웃이 먼저, 아니면 AI끼리 토론
+                    if not (self._ai_mafia_bluff() or self._ai_town_bluff()):      # 거짓 커밍아웃(마피아·시민 진영)이 먼저, 아니면 AI끼리 토론
                         self._ai_vs_ai_banter()
         self._day_tick = self.root.after(1000, self._day_tick_loop)
 
@@ -1004,7 +1004,7 @@ class MafiaVoteMixin:
             elif pl.role == "police" and defendant in known_cit:
                 yes = False
             elif pl.role == "doctor" and defendant in known_maf:
-                yes = True                      # 나 말고 의사를 자처한 사람 — 확실한 마피아
+                yes = True                      # (known_maf는 이제 경찰 조사 결과뿐 — 의사에게는 항상 비어 있다)
             elif pl.role == "doctor" and defendant in police_claims:
                 yes = False                     # 진짜 경찰일 수 있는 사람은 처형하지 않는다
             elif pl.role == "mafia":

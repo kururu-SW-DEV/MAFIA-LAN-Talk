@@ -59,8 +59,8 @@ check("마피아 AI의 거짓 경찰·의사 커밍아웃도 기록됨", "미나
 check("마피아 시점: 동료(미나)의 가짜 경찰은 표적에서 제외", "미나" not in mafia2.police_claimants())
 check("마피아 시점: 동료(두식)의 가짜 의사는 표적에서 제외", "두식" not in mafia1.doctor_claimants())
 check("의사 AI는 마피아의 가짜 경찰도 진짜일 수 있다고 보고 보호 후보에 넣음(전지적이지 않음)", doc.public_police_claims() == ["미나"])
-check("진짜 경찰 AI는 다른 경찰 자처자를 확실한 마피아(거짓말쟁이)로 앎", cop.known_mafia_alive() == ["미나"])
-check("진짜 의사 AI는 다른 의사 자처자를 확실한 마피아로 앎", doc.known_mafia_alive() == ["두식"])
+check("진짜 경찰 AI는 다른 경찰 자처자를 거짓말쟁이로 보되 확실한 마피아로 단정하진 않음(시민의 미끼일 수 있음)", cop.known_mafia_alive() == [] and cop.suspected_liars() == ["미나"])
+check("진짜 의사 AI도 다른 의사 자처자를 거짓말쟁이로만 봄", doc.known_mafia_alive() == [] and doc.suspected_liars() == ["두식"])
 check("시민·마피아 AI는 그런 확신이 없음", mafia1.known_mafia_alive() == [])
 
 # ---- 3) 거짓 커밍아웃 발동 ----
@@ -168,3 +168,21 @@ except Exception:
     pass
 print("AI BLUFF", "PASSED" if ALL else "FAILED")
 sys.exit(0 if ALL else 1)
+
+# ---- v1.114 시민 진영의 거짓 커밍아웃 ----
+app._police_claims = {}; app._doctor_claims = {}; app._town_bluff_count = 0
+for pl in d.players:
+    pl.bluffed = False
+mk_c = mk("철수", "citizen"); d.players.append(mk_c); app.ai.players = d.players
+class _R:
+    def random(self): return 0.0
+    def choice(self, seq): return [x for x in seq if x.role == "citizen"][0]
+_old = mafia_ui_ai.random_mod; mafia_ui_ai.random_mod = _R()
+said.clear()
+ok = app._ai_town_bluff()
+mafia_ui_ai.random_mod = _old
+check("시민 AI가 거짓 커밍아웃을 시작함", ok and said and said[0][0] == "철수" and "거짓 커밍아웃" in said[0][1])
+check("횟수·표식 소모", app._town_bluff_count == 1 and mk_c.bluffed)
+mk_c.bluffed = False; app._town_bluff_count = 2
+check("판당 최대 횟수 제한", app._ai_town_bluff() is False)
+print("ALL OK" if ALL else "SOME FAILED"); sys.exit(0 if ALL else 1)

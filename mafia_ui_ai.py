@@ -316,7 +316,44 @@ class MafiaAIChatMixin:
         self.root.after(30_000, lambda p=pl: self._bluff_rollback(p))
         return True
 
-    def _bluff_rollback(self, pl):
+    # v1.114 — 시민 진영도 거짓말을 한다: 시민·의사·경찰 AI가 다른 직업을 자처(마피아의 표적을 빗나가게 하는 미끼, 혼란 유발)
+    _TOWN_BLUFF_MAX = 2
+
+    def _ai_town_bluff(self):
+        """시민 진영 AI 한 명이 거짓으로 경찰/의사를 자처한다(판당 최대 2회, AI당 1회). 하면 True.
+        시민→경찰/의사, 의사→경찰, 경찰→의사 사칭. 마피아만 사칭하면 자처자=마피아로 바로 들통나므로 섞는다."""
+        if not (self.mafia_active and getattr(self, "mafia_host_mode", False) and getattr(self, "ai", None)
+                and self.core.phase == Phase.DAY):
+            return False
+        if getattr(self, "_town_bluff_count", 0) >= self._TOWN_BLUFF_MAX:
+            return False
+        cand = [pl for pl in self.ai.players if pl.alive and getattr(pl, "booted", False)
+                and getattr(pl, "role", None) in ("citizen", "doctor", "police")
+                and not getattr(pl, "busy", False) and not getattr(pl, "bluffed", False)]
+        if not cand:
+            return False
+        p = 0.12 if getattr(self.core, "day_no", 1) >= 2 else 0.05
+        if random_mod.random() >= p:
+            return False
+        pl = random_mod.choice(cand)
+        if pl.role == "police":
+            role = "doctor"
+        elif pl.role == "doctor":
+            role = "police"
+        else:
+            role = "police" if random_mod.random() < 0.5 else "doctor"
+        label = "경찰" if role == "police" else "의사"
+        prompt = (f"[거짓 커밍아웃 — 시민 진영의 연막] 당신은 사실 {'시민' if pl.role == 'citizen' else ('의사' if pl.role == 'doctor' else '경찰')}이지만, "
+                  f"마피아의 표적을 진짜 경찰·의사에게서 돌리고 마피아를 혼란시키려고 지금 '나 {label}이야'라고 거짓으로 밝히세요"
+                  f"(이번 한 번만 신분을 말해도 됩니다). '어젯밤 ○○를 {'조사했는데 시민이었어' if role == 'police' else '지켰어'}'처럼 그럴듯하게 지어내세요. "
+                  f"반드시 '나 {label}이야'라는 표현을 쓰고, 한 문장(20자 안팎)으로 아주 짧게, 친구들끼리 카톡하듯 한 줄로 말하세요.")
+        pl.bluffed = True
+        self._town_bluff_count = getattr(self, "_town_bluff_count", 0) + 1
+        self.ai.say_one_async(pl, lambda _p, _pr=prompt: _pr)
+        self.root.after(30_000, lambda p=pl: self._bluff_rollback(p, town=True))
+        return True
+
+    def _bluff_rollback(self, pl, town=False):
         """30초 안에 거짓 커밍아웃이 실제로 채팅에 나오지 않았으면(LLM 실패·busy 등) 횟수를 되돌린다 — 안 그러면 마피아가
         둘뿐인 판에서 두 번 실패하는 것만으로 이 기능이 그 판 내내 꺼진다."""
         if not getattr(pl, "bluffed", False):
@@ -324,7 +361,10 @@ class MafiaAIChatMixin:
         if pl.name in (getattr(self, "_police_claims", None) or {}) or pl.name in (getattr(self, "_doctor_claims", None) or {}):
             return                      # 실제로 커밍아웃이 기록됨 — 소모가 맞다
         pl.bluffed = False
-        self._bluff_count = max(0, getattr(self, "_bluff_count", 0) - 1)
+        if town:
+            self._town_bluff_count = max(0, getattr(self, "_town_bluff_count", 0) - 1)
+        else:
+            self._bluff_count = max(0, getattr(self, "_bluff_count", 0) - 1)
 
     def _ai_hear_human(self, speaker, text):
         """사람 참가자의 발언에 AI가 반응하게 한다. 이 PC의 사용자든 원격 참가자든 똑같이 처리한다.

@@ -212,7 +212,7 @@ for _ in range(15):
     core.defense_yes = {}
     app._ai_defense_vote_fast(cop)
     ys.append(core.defense_yes.get("레오"))
-check("경찰 AI는 다른 경찰 자처자(가짜)의 찬반 표에서 항상 찬성", all(v is True for v in ys))
+check("경찰 AI는 다른 경찰 자처자를 확정 마피아로 단정하지 않음(v1.114: 시민의 미끼일 수 있어 자동 찬성 안 함)", cop.known_mafia_alive() == [] and cop.suspected_liars() == ["철수"])
 app._police_claims = {}
 
 # 4) 새 판이면 조사 정보 초기화

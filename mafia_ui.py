@@ -566,6 +566,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         self._reset_ghost_state()
         self._doctor_claims = {}
         self._bluff_count = 0
+        self._town_bluff_count = 0
         # v1.90 — 이 둘은 이름별 쿨다운/타임스탬프라(mafia_ui_ai.py) 판이 바뀌어도 지우지
         # 않고 있었다. 사람 이름이나 AI 페르소나 이름이 다음 판에 다시 나오면(흔함 — AI
         # 이름 풀이 한정적) 지난 판 막판의 쿨다운이 그대로 남아 새 판 초반 경찰 옹호·AI의
