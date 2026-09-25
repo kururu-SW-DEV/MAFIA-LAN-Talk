@@ -689,9 +689,11 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             f"{n}({role_names.get(p['role'], '?')})"
             for n, p in self.core.players.items())
         self.add_mafia_system(f"🎭 정체 공개 — {reveals}", local=True)
+        # v1.116 — 승리 멘트는 방송하지 않는다: end를 받은 참가자는 이미 로비로 돌아가 방장 이름을 잊어 뒤따라온 hsay를
+        # 방장이 보낸 것으로 인정하지 못하고 버렸다(참가자 화면에만 사회자 멘트가 없던 원인). 참가자는 _client_game_end가 직접 그린다.
         self.add_mafia_host(
             f"{emoji} {label} 팀이 승리했습니다. 다들 수고하셨습니다. "
-            "다시 시작하려면 [게임 시작]을 눌러 주세요.")
+            "다시 시작하려면 [게임 시작]을 눌러 주세요.", local=True)
         self.ai.say_async(lambda pl: (
             "[게임 종료] 사회자가 승자를 발표했습니다. 당신 역할과 승패는 사회자가 별도 안내했습니다. "
             "진 심정이 담긴 마무리 한마디를 하세요 (역할명은 말해도 됨)."))

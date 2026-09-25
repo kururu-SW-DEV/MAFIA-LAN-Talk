@@ -829,6 +829,38 @@ def apply_ime_font(widget, family, point_size):
         pass
 
 
+def force_korean_ime(widget):
+    """입력창에 처음 포커스를 줄 때 한글 입력 상태(한/영 키를 누른 뒤와 같은 상태)로 맞춘다.
+    한국어 키보드 배열이 선택돼 있을 때만 동작한다(영어 배열 사용자는 건드리지 않는다). 실패해도 조용히 무시.
+    성공하면 True."""
+    if not (_HAS_CTYPES and os.name == "nt"):
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        imm32 = ctypes.windll.imm32
+        user32.GetKeyboardLayout.restype = ctypes.c_void_p
+        layout = user32.GetKeyboardLayout(0) or 0
+        if (layout & 0xFFFF) != 0x0412:          # LANGID 한국어가 아니면 그대로 둔다
+            return False
+        hwnd = widget.winfo_id()
+        imm32.ImmGetContext.restype = ctypes.c_void_p
+        himc = imm32.ImmGetContext(hwnd)
+        if not himc:
+            return False
+        try:
+            himc = ctypes.c_void_p(himc)
+            imm32.ImmSetOpenStatus(himc, 1)
+            # IME_CMODE_NATIVE(0x1): 한글 모드. 현재 변환 모드의 다른 비트(전각 등)는 유지한다.
+            conv = ctypes.c_ulong(0); sent = ctypes.c_ulong(0)
+            imm32.ImmGetConversionStatus(himc, ctypes.byref(conv), ctypes.byref(sent))
+            imm32.ImmSetConversionStatus(himc, conv.value | 0x1, sent.value)
+            return bool(imm32.ImmGetOpenStatus(himc))
+        finally:
+            imm32.ImmReleaseContext(hwnd, himc)
+    except Exception:
+        return False
+
+
 def get_idle_seconds():
     """Windows GetLastInputInfo API를 사용해 시스템 전역 사용자 입력(키보드/마우스)
     유휴 시간(초)을 반환한다. 비-Windows 또는 실패 시 0.0 반환."""

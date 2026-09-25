@@ -148,6 +148,7 @@ class MafiaNetMixin:
         self._mafia_overlay_close()     # v1.105 — 열려 있던 유령 채팅방 정리
         self._play_mafia_sound("citizen_win" if winner == "citizen" else "mafia_win")
         self.add_mafia_system(f"⚖ 게임 종료 — {label} 팀 승리!")
+        self.add_mafia_bubble(f"{'🎉' if winner == 'citizen' else '🩸'} {label} 팀이 승리했습니다. 다들 수고하셨습니다.", "🖥 사회자")
         if roles and isinstance(roles, dict):
             reveals = ", ".join(f"{n}({ROLE_LABEL_KR.get(r, '?')})" for n, r in roles.items())
             self.add_mafia_system(f"🎭 정체 공개 — {reveals}")

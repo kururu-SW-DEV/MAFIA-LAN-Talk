@@ -27,7 +27,7 @@ import tk_thread_safe
 from netutils import (default_datadir, default_name, korea_time_str, sanitize_chat_text,
                        get_clipboard_image_bytes, get_clipboard_files)
 from canvas_utils import round_rect, smooth_circle_photo, bind_scoped_mousewheel
-from winapi import (Notifier, apply_dark_titlebar, apply_ime_font,
+from winapi import (Notifier, apply_dark_titlebar, apply_ime_font, force_korean_ime,
                      is_run_at_startup_enabled, set_run_at_startup, force_foreground_window,
                      show_native_menu, classify_tray_event)
 from widgets import SplitterHandle, ScrollBottomButton, MinimalScrollbar, PillButton, ChatSearchBar, ReplyBanner, PinBanner, EmojiPicker, MentionPopup, make_search_icon
@@ -486,8 +486,12 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
         statuslbl.pack(fill="x", side="bottom")
         statuslbl.pack_propagate(False)
         self.status = tk.StringVar(value="왼쪽 목록에서 대화 상대를 선택하세요")
-        tk.Label(statuslbl, textvariable=self.status, fg=C_MUTE, bg=C_CARD, font=FONT_XS,
-                 anchor="w").pack(fill="both", expand=True, padx=16)
+        self._status_lbl = tk.Label(statuslbl, textvariable=self.status, fg=C_MUTE, bg=C_CARD, font=FONT_XS,
+                                    anchor="w")
+        self._status_lbl.pack(fill="both", expand=True, padx=16)
+        # v1.116 — 게임 중 지금이 몇 번째 낮/밤인지 하단 바 오른쪽에 고정 표시(다른 방을 보고 있어도 보인다)
+        self._phase_badge = tk.Label(statuslbl, text="", fg="white", bg=C_CARD, font=(FONT_FAM, 9, "bold"), padx=14)
+        emoji_render.apply(self._phase_badge, (FONT_FAM, 9, "bold"))
         row = tk.Frame(body, bg=C_MAIN)
         row.pack(fill="x", side="bottom", padx=8, pady=8)
         self.input_row = row
@@ -1767,6 +1771,7 @@ class App(DialogsMixin, ChatRendererMixin, ChatSearchMixin, DndMixin, MafiaUIMix
         self._sync_burn_btn_visual()
         self.status.set("전송 준비 완료")
         self.entry.focus_set()
+        self.root.after(60, lambda: force_korean_ime(self.entry))     # v1.116 — 채팅방을 열면 한글 입력으로 시작
         self._reload_chat(key, force_bottom=True)
         self._refresh_list()
         self._update_pin_banner()

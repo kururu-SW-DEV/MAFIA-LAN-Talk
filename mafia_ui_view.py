@@ -428,18 +428,84 @@ class MafiaViewMixin:
             try: self.chat_wrap.configure(bg=bg_chat)
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
-        if hasattr(self, "mafia_bar") and not getattr(self, "_defense_in_progress", False):
-            try: self.mafia_bar.configure(bg=bg_bar)
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
-            # mafia_phase_lbl은 mafia_bar의 자식이지만 자기 bg를 따로 갖고 있어서
-            # (실측 지적: 밤이 되면 게임바는 어두워지는데 이 라벨만 예전 밝은
-            # 카드색 네모가 그대로 남아 있었음) 부모와 같이 맞춰줘야 한다.
+        self._apply_bar_palette("night" if is_night else None)
+
+    # v1.116 — 게임 진행 줄(상태 바) 색을 단계별로 구분한다: 낮=호박색, 개표=남보라, 밤=심야 파랑, 최후 변론=녹색(아래
+    # _start_defense_visuals), 로비·종료=기본. 예전에는 낮·개표가 같은 회색 카드색이고 변론만 붉어서 단계가 한눈에 안 갈렸다.
+    _DEFENSE_BAR = ("#14532d", "#bbf7d0")     # 최후 변론 — 짙은 녹색(문구 대비 7.5:1). v1.116: 붉은색에서 변경
+    _BAR_PALETTE = {
+        "day":   ("#4a2f0b", "#fde68a"),
+        "vote":  ("#1e1b4b", "#c7d2fe"),
+        "night": ("#0b1226", "#93c5fd"),
+        "idle":  (None, "#c4b5fd"),
+    }
+
+    def _bar_key(self):
+        core = getattr(self, "core", None)
+        if core is None or not getattr(self, "mafia_active", False):
+            return "idle"
+        ph = core.phase
+        if ph == Phase.NIGHT:
+            return "night"
+        if ph == Phase.VOTE or (ph == Phase.DAY and getattr(self, "_vote_window", False)):
+            return "vote"
+        if ph == Phase.DAY:
+            return "day"
+        return "idle"
+
+    def _phase_badge_info(self):
+        """하단 바 고정 표시용 (문구, 색 키). 게임 중이 아니거나 끝난 뒤면 None."""
+        core = getattr(self, "core", None)
+        if core is None or not getattr(self, "mafia_active", False) or core.phase in (Phase.LOBBY, Phase.END):
+            return None
+        n = max(1, int(getattr(core, "day_no", 1) or 1))
+        if getattr(self, "_defense_in_progress", False):
+            return f"⚖ {n}일차 · 최후 변론", "defense"
+        key = self._bar_key()
+        text = {"day": f"☀ 낮 {n}일차", "vote": f"🗳 {n}일차 · 개표", "night": f"🌙 밤 {n}일차"}.get(key)
+        return (text, key) if text else None
+
+    def _refresh_phase_badge(self):
+        """v1.116 — 하단 상태 바 오른쪽에 '☀ 낮 2일차' 같은 현재 단계를 단계 색으로 고정 표시한다(안내 문구가 바뀌어도 그대로)."""
+        try:
+            lbl = getattr(self, "_phase_badge", None)
+            anchor = getattr(self, "_status_lbl", None)
+            if lbl is None or anchor is None:
+                return
+            info = self._phase_badge_info()
+            if info is None:
+                if getattr(self, "_badge_shown", False):
+                    lbl.pack_forget()
+                    self._badge_shown = False
+                    self._badge_state = None
+                return
+            text, key = info
+            bg, fg = self._DEFENSE_BAR if key == "defense" else self._BAR_PALETTE[key]
+            if (text, bg, fg) != getattr(self, "_badge_state", None):
+                self._badge_state = (text, bg, fg)
+                lbl.configure(text=text, bg=bg, fg=fg)
+            if not getattr(self, "_badge_shown", False):
+                lbl.pack(side="right", fill="y", before=anchor)
+                self._badge_shown = True
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
+    def _apply_bar_palette(self, key=None, force=False):
+        """현재 단계(또는 key)의 색을 게임 줄·상태 라벨·둥근 버튼 모서리에 적용한다. 변론 중에는 변론 색(녹색)을 유지한다."""
+        if (getattr(self, "_defense_in_progress", False) and not force) or not hasattr(self, "mafia_bar"):
+            return
+        bg, fg = self._BAR_PALETTE[key or self._bar_key()]
+        bg = bg or C_CARD
+        if getattr(self, "_bar_applied", None) == (bg, fg):
+            return
+        self._bar_applied = (bg, fg)
+        try:
+            self.mafia_bar.configure(bg=bg)
             if hasattr(self, "mafia_phase_lbl"):
-                try: self.mafia_phase_lbl.configure(bg=bg_bar)
-                except Exception as _swallow_e:
-                    applog.swallowed(_swallow_e)
-            self._refresh_mafia_bar_pill_bg()
+                self.mafia_phase_lbl.configure(bg=bg, fg=fg)
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+        self._refresh_mafia_bar_pill_bg()
 
     def _start_defense_visuals(self, name):
         """최후 변론 시작 시 재판정 스포트라이트, 발언권 잠금 및 60초 프로그레스 바 개시."""
@@ -453,11 +519,13 @@ class MafiaViewMixin:
             duration_ms=2200,
             sound_type="trial"
         )
+        self._bar_applied = None          # 변론이 끝나면 단계 색을 다시 적용한다
+        self._refresh_phase_badge()
         if hasattr(self, "mafia_bar"):
-            self.mafia_bar.configure(bg="#7f1d1d")
+            self.mafia_bar.configure(bg=self._DEFENSE_BAR[0])
             self._refresh_mafia_bar_pill_bg()
         if hasattr(self, "mafia_phase_lbl"):
-            self.mafia_phase_lbl.configure(bg="#7f1d1d", fg="#fecaca")
+            self.mafia_phase_lbl.configure(bg=self._DEFENSE_BAR[0], fg=self._DEFENSE_BAR[1])
 
         me_name = getattr(self.engine, "name", None)
         if me_name == name:
@@ -486,7 +554,7 @@ class MafiaViewMixin:
             return
         blocks = max(0, min(10, int(sec / 60 * 10)))
         bar_str = "■" * blocks + "□" * (10 - blocks)
-        color = "#ef4444" if sec <= 10 else "#fecaca"
+        color = "#fde047" if sec <= 10 else self._DEFENSE_BAR[1]      # 마지막 10초는 노랑(녹색 바에서 빨강은 대비 2.4:1로 안 보인다)
         if hasattr(self, "mafia_phase_lbl"):
             try:
                 self.mafia_phase_lbl.configure(
@@ -517,15 +585,8 @@ class MafiaViewMixin:
             try: self.send_btn.configure(state="normal")
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
-        if hasattr(self, "mafia_bar"):
-            try: self.mafia_bar.configure(bg=C_CARD)
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
-            self._refresh_mafia_bar_pill_bg()
-        if hasattr(self, "mafia_phase_lbl"):
-            try: self.mafia_phase_lbl.configure(bg=C_CARD, fg="#c4b5fd")
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
+        self._bar_applied = None
+        self._apply_bar_palette(force=True)      # 변론이 끝났으니 변론 색을 풀고 단계 색으로
         self.refresh_mafia_phase_label()
 
     def _show_verdict_visuals(self, result, name, role2, yes, no):
@@ -875,11 +936,14 @@ class MafiaViewMixin:
         self._roster_tick_id = None
         if not getattr(self, "mafia_active", False):
             self._refresh_mafia_roster()
+            self._refresh_phase_badge()
             return
         # v1.92 — 방장이 종료 통보 없이 사라진 경우(크래시·전원 차단)를 참가자가 스스로 알아챈다.
         if self._client_host_watch():
+            self._refresh_phase_badge()
             return
         self._refresh_mafia_roster()
+        self._refresh_phase_badge()
         self._roster_tick_id = self.root.after(2000, self._mafia_roster_tick)
 
     def _role_tag(self):
@@ -899,6 +963,8 @@ class MafiaViewMixin:
             self._refresh_mafia_roster()
         if not getattr(self, "mafia_phase_lbl", None):
             return
+        self._apply_bar_palette()
+        self._refresh_phase_badge()
         ph = self.core.phase
         if ph == Phase.LOBBY:
             txt = "로비 — [게임 시작]을 누르면 AI 참가자가 배정됩니다"
@@ -1004,9 +1070,9 @@ class MafiaViewMixin:
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
 
-    def add_mafia_host(self, text):
+    def add_mafia_host(self, text, local=False):
         self.add_mafia_bubble(text, "🖥 사회자")
-        if getattr(self, "mafia_host_mode", False) and self.mafia_active:
+        if not local and getattr(self, "mafia_host_mode", False) and self.mafia_active:
             self._mafia_broadcast("hsay", text=text, host="🖥 사회자")
         if getattr(self, "ai", None) and self.mafia_active:
             self.ai.observe_all("사회자", text)
