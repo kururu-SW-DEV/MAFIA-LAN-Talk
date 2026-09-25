@@ -821,6 +821,55 @@ class MafiaViewMixin:
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
 
+    _HOST_WARN_SEC = 15       # v1.115 — 방장 소식이 이만큼 끊기면 먼저 경고한다(hb는 4초마다 온다)
+    _HOST_GIVEUP_SEC = 45     # 이만큼 끊기면 게임을 접고 로비로 돌아간다
+
+    def _note_host_alive(self, t):
+        self._mafia_last_host_ts = time.time()
+        if t == "hb":
+            self._host_hb_seen = True
+
+    def _client_watch_reset(self):
+        """참가자 쪽 새 판 시작 — 방장 소식 시계를 지금으로 맞추고 경고 상태를 지운다."""
+        self._mafia_last_host_ts = time.time()
+        self._host_hb_seen = False
+        self._host_warned = False
+
+    def _client_host_watch(self):
+        """참가자 쪽 방장 연결 감시(2초 틱에서 호출). 방장 이벤트가 15초 끊기면 경고, 다시 오면 복구 안내,
+        45초 끊기면 게임을 접고 로비로. 예전에는 45초 동안 아무 안내 없이 화면이 멈춰 있었다. 종료했으면 True."""
+        try:
+            if self._mafia_is_host():
+                return False
+            host = getattr(self, "_recruiter_host", None)
+            last = getattr(self, "_mafia_last_host_ts", None)
+            if not (host and last):
+                return False
+            now = time.time()
+            silent = now - last
+            if silent > self._HOST_GIVEUP_SEC:
+                self._host_warned = False
+                self.add_mafia_system("⚠ 방장과의 연결이 끊겨 게임을 종료하고 로비로 돌아갑니다.")
+                self._client_reset_to_lobby()
+                self._refresh_mafia_roster()
+                return True
+            if silent >= self._HOST_WARN_SEC and not getattr(self, "_host_warned", False):
+                # hb를 보내는 방장(v1.95+)이거나 접속 목록에서도 방장이 안 보일 때만 — 옛 방장은 조용한 구간에 이벤트가 없다
+                addr = self._mafia_peer_of(host)
+                p = self.engine.get_peer(addr) if addr else None
+                gone = p is None or now - p.get("last", 0) > PEER_TIMEOUT
+                if getattr(self, "_host_hb_seen", False) or gone:
+                    self._host_warned = True
+                    self.add_mafia_system(
+                        f"⚠ 방장({host})과의 연결이 끊긴 것 같습니다 — 게임이 멈춘 것처럼 보일 수 있습니다. "
+                        f"{self._HOST_GIVEUP_SEC}초 안에 다시 연결되지 않으면 로비로 돌아갑니다.", local=True)
+            elif silent < 8 and getattr(self, "_host_warned", False):
+                self._host_warned = False
+                self.add_mafia_system("✅ 방장과의 연결이 다시 확인되었습니다.", local=True)
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+        return False
+
     def _mafia_roster_tick(self):
         """2초마다 현황을 갱신(사망·접속 끊김 등 어떤 경로로 바뀌어도 반영). 게임 중에만 돈다."""
         self._roster_tick_id = None
@@ -828,20 +877,8 @@ class MafiaViewMixin:
             self._refresh_mafia_roster()
             return
         # v1.92 — 방장이 종료 통보 없이 사라진 경우(크래시·전원 차단)를 참가자가 스스로 알아챈다.
-        try:
-            if not self._mafia_is_host():
-                host = getattr(self, "_recruiter_host", None)
-                last = getattr(self, "_mafia_last_host_ts", None)
-                # v1.95 — 예전엔 "방장이 피어 목록에도 없다"까지 요구했는데, 정적 등록됐거나 대화 기록이
-                # 있는 방장은 목록에서 안 지워져 이 검사가 영영 안 걸렸다. 방장이 4초마다 보내는 hb 등
-                # 방장 이벤트가 45초 넘게 하나도 없으면 사라진 것으로 본다.
-                if (host and last and time.time() - last > 45):
-                    self.add_mafia_system("⚠ 방장과의 연결이 끊겨 게임을 종료하고 로비로 돌아갑니다.")
-                    self._client_reset_to_lobby()
-                    self._refresh_mafia_roster()
-                    return
-        except Exception as _swallow_e:
-            applog.swallowed(_swallow_e)
+        if self._client_host_watch():
+            return
         self._refresh_mafia_roster()
         self._roster_tick_id = self.root.after(2000, self._mafia_roster_tick)
 

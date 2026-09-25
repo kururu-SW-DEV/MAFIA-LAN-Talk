@@ -731,7 +731,7 @@ class MafiaNetMixin:
                     applog.swallowed(_swallow_e)
                 self._revote_deadline = None
         if t != "recruit_start" and t in self._HOST_ONLY_EVENTS:
-            self._mafia_last_host_ts = time.time()      # 방장이 살아 있다는 표시
+            self._note_host_alive(t)      # 방장이 살아 있다는 표시(v1.115: hb 수신 여부도 기록)
         # 참가 신청하지 않은 사람에게는 게임 진행 화면(시작·밤 연출·투표 팝업)을 띄우지 않는다.
         if not self._mafia_is_host():
             if t == "start":
@@ -887,6 +887,7 @@ class MafiaNetMixin:
                     self.root.after(100, lambda r=role: self._show_role_popup(r, sound=True))
         elif t == "start":
             self.mafia_active = True
+            self._client_watch_reset()
             self._reset_ghost_state()
             self._pending_heal = None
             self._confirmed_heal = None
