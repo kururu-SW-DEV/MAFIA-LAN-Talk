@@ -353,17 +353,6 @@ class GameCore:
         with self.lock:
             return [n for n, p in self.players.items() if not p["alive"]]
 
-    def sudden_death(self, name):
-        """게임 도중 이탈 → 돌연사 처리. 성공 시 (True, role)"""
-        with self.lock:
-            if self.players.get(name, {}).get("alive"):
-                self.players[name]["alive"] = False
-                role = self.players[name]["role"]
-                self.log.append({"phase": "day", "day": self.day_no,
-                                  "kind": "sudden_death", "who": name})
-                return True, role
-            return False, None
-
     def reveal_role(self, name):
         """사망(처형/돌연사/밤사망)자의 직업 즉시 공개용."""
         with self.lock:
@@ -371,13 +360,6 @@ class GameCore:
             if p and not p["alive"]:
                 return p["role"]
             return None
-
-    def human_ai_role_names(self):
-        """승/패 표시용 — name / role / alive / is_ai 목록."""
-        with self.lock:
-            return [{"name": n, "role": p["role"], "alive": p["alive"],
-                      "is_ai": p["is_ai"], "color": p["color"]}
-                     for n, p in self.players.items()]
 
     def mafias(self):
         with self.lock:

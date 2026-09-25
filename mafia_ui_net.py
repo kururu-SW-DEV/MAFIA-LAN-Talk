@@ -135,6 +135,15 @@ class MafiaNetMixin:
             if m in self.core.players:
                 self.core.players[m]["role"] = "mafia"
 
+    def _client_close_game_ui(self):
+        self._mafia_room_close()
+        self._reset_ghost_state()
+        self._ghost_ui_open = False
+        try:
+            self._mafia_overlay_close()
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
+
     def _client_game_end(self, winner, roles):
         """v1.61 — 원격 참가자 쪽 게임 종료 처리: 호스트와 같은 종료 안내를 띄우고
         상태를 로비로 되돌린다(안 그러면 mafia_active가 남아 다음 판 start
@@ -142,32 +151,19 @@ class MafiaNetMixin:
         label = "시민" if winner == "citizen" else "마피아"
         self._epilogue_host = getattr(self, "_recruiter_host", None)      # v1.106 — 종료 뒤 90초 동안 이 방장의 후일담을 받는다
         self._epilogue_until = time.time() + 90
-        self._mafia_room_close()
-        self._reset_ghost_state()
-        self._ghost_ui_open = False
-        self._mafia_overlay_close()     # v1.105 — 열려 있던 유령 채팅방 정리
+        self._client_close_game_ui()     # v1.105 — 열려 있던 비밀방·유령 채팅방을 종료 안내 앞에 정리
         self._play_mafia_sound("citizen_win" if winner == "citizen" else "mafia_win")
         self.add_mafia_system(f"⚖ 게임 종료 — {label} 팀 승리!")
         self.add_mafia_bubble(f"{'🎉' if winner == 'citizen' else '🩸'} {label} 팀이 승리했습니다. 다들 수고하셨습니다.", "🖥 사회자")
         if roles and isinstance(roles, dict):
             reveals = ", ".join(f"{n}({ROLE_LABEL_KR.get(r, '?')})" for n, r in roles.items())
             self.add_mafia_system(f"🎭 정체 공개 — {reveals}")
-        try:
-            self._mafia_overlay_close()
-        except Exception as _swallow_e:
-            applog.swallowed(_swallow_e)
         self._client_reset_to_lobby()
 
     def _client_force_quit_end(self):
         """v1.89 — 방장이 게임을 강제 종료했을 때(force_end) 원격 참가자 쪽 처리.
         _client_game_end과 달리 승패·정체 공개가 없다(승부가 나서 끝난 게 아니므로)."""
-        self._mafia_room_close()
-        self._reset_ghost_state()
         self.add_mafia_system("🛑 방장이 게임을 강제로 종료했습니다.")
-        try:
-            self._mafia_overlay_close()
-        except Exception as _swallow_e:
-            applog.swallowed(_swallow_e)
         self._client_reset_to_lobby()
 
     def _refresh_leave_btn(self):
@@ -209,19 +205,23 @@ class MafiaNetMixin:
         for _d in (2500, 7000):
             self.root.after(_d, _send_leave)
         self._in_game = False
-        self._mafia_room_close()
-        self._reset_ghost_state()
-        try:
-            self._mafia_overlay_close()
-        except Exception as _swallow_e:
-            applog.swallowed(_swallow_e)
-        self._clear_client_defense()
         self._client_reset_to_lobby()
         self.add_mafia_system("🚪 게임에서 나왔습니다.", local=True)
         self._play_mafia_sound("leave")
 
     def _client_reset_to_lobby(self):
-        """게임이 끝난 뒤(정상 종료·강제 종료 공통) 원격 참가자 쪽 상태를 로비로 되돌린다."""
+        """게임이 끝난 뒤(정상 종료·강제 종료·나가기·방장 끊김 공통) 원격 참가자 쪽 상태를 로비로 되돌린다.
+        v1.117 — 열려 있던 비밀방·유령방·변론 잠금·팝업 정리와 변론 표시(_defense_in_progress)도 여기서 한다
+        (경로마다 정리 범위가 달라 방장 끊김 포기 뒤 비밀방이 로비에 남고 다음 판 배지가 '최후 변론'으로 남던 문제). 여러 번 불러도 안전."""
+        self._defense_in_progress = False
+        self._mafia_room_close()
+        self._reset_ghost_state()
+        self._ghost_ui_open = False
+        self._clear_client_defense()
+        try:
+            self._mafia_overlay_close()
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
         self.mafia_active = False
         self._recruiting = False
         self._recruited_humans = []
@@ -254,21 +254,14 @@ class MafiaNetMixin:
             self.mafia_force_quit_btn.pack_forget()
         self._refresh_leave_btn()
         if hasattr(self, "mafia_start_btn"):
-            self.mafia_start_btn.configure(text="📢 참가자 모집", bg="#b91c1c",
-                                           activebackground="#7f1d1d", state="normal")
+            self._reset_start_btn()
         self.refresh_mafia_phase_label()
         self._mafia_pack_lobby_buttons()
 
     def _client_start_day_countdown(self):
         """v1.61 — 원격 참가자도 낮 남은 시간을 볼 수 있게 표시 전용 카운트다운을
         로컬에서 돌린다(개표/개행 판정은 하지 않음 — 그건 호스트 몫)."""
-        t = getattr(self, "_day_tick", None)
-        if t:
-            try:
-                self.root.after_cancel(t)
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
-            self._day_tick = None
+        self._cancel_after("_day_tick")
         self._vote_window = False
         self._day_deadline = time.time() + DAY_CYCLE_SECONDS
         self._day_tick_loop()
@@ -515,13 +508,7 @@ class MafiaNetMixin:
             (60 + DEFENSE_VOTE_WINDOW + 15) * 1000, self._client_defense_timeout)
 
     def _cancel_client_defense_guard(self):
-        t = getattr(self, "_defense_client_guard", None)
-        if t:
-            try:
-                self.root.after_cancel(t)
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
-        self._defense_client_guard = None
+        self._cancel_after("_defense_client_guard")
 
     def _clear_client_defense(self):
         self._cancel_client_defense_guard()
@@ -680,10 +667,6 @@ class MafiaNetMixin:
         다시 보내지 않는다(v1.75가 같은 줄을 한 번 더 보내 원격 화면에 두 번 뜨던 것을 v1.82에서 제거)."""
         self._mafia_broadcast("vote", voter=voter, abstain=(target is None))
 
-    def _broadcast_defense_progress(self, voter):
-        """(호환용 빈 함수) 찬반 표 접수 안내도 add_mafia_system이 이미 방송한다."""
-        return
-
     # v1.90 — _mafia_sys_except(사용되지 않던 죽은 코드)를 여기서 지웠다. add_mafia_system이
     # 이미 _mafia_broadcast("sys", ...)로 방송하고 있고(v1.88 #7로 실제 명단에만 가도록
     # 범위가 좁혀짐), 이 함수는 그 이전 방식대로 eng.peers 전체(구경꾼 포함)에게 직접
@@ -724,13 +707,7 @@ class MafiaNetMixin:
         if t in ("defense_start", "verdict", "night", "day", "end", "force_end") and not self._mafia_is_host():
             # v1.92 — 클라이언트가 재투표 팝업을 열며 건 25·30초 기한이 단계가 바뀌어도 안 지워져,
             # 뒤늦게 터져 그때 열려 있던 밤 행동 패널·유령방 등을 엉뚱하게 닫았다.
-            dl = getattr(self, "_revote_deadline", None)
-            if dl:
-                try:
-                    self.root.after_cancel(dl)
-                except Exception as _swallow_e:
-                    applog.swallowed(_swallow_e)
-                self._revote_deadline = None
+            self._cancel_after("_revote_deadline")
         if t != "recruit_start" and t in self._HOST_ONLY_EVENTS:
             self._note_host_alive(t)      # 방장이 살아 있다는 표시(v1.115: hb 수신 여부도 기록)
         # 참가 신청하지 않은 사람에게는 게임 진행 화면(시작·밤 연출·투표 팝업)을 띄우지 않는다.
@@ -896,7 +873,7 @@ class MafiaNetMixin:
             self._recruited_humans = []
             self._my_joined = False
             if hasattr(self, "mafia_start_btn"):
-                self.mafia_start_btn.configure(text="[게임 진행 중]", state="disabled")
+                self._start_btn_running()
             if hasattr(self, "mafia_join_btn"):
                 self.mafia_join_btn.pack_forget()
             if hasattr(self, "mafia_cancel_recruit_btn"):
@@ -955,7 +932,6 @@ class MafiaNetMixin:
                 self.root.after(4000, self._request_role_if_missing)
             self.refresh_mafia_phase_label()
         elif t == "night":
-            self.core.phase_placeholder = None
             self._unlock_defense_entry()
             self._set_night_theme(True)
             self._mafia_show_splash(
@@ -1028,13 +1004,7 @@ class MafiaNetMixin:
             if not self._mafia_is_host() and self.mafia_active and self.core.phase == Phase.DAY                     and not getattr(self, "_vote_window", False):
                 sec = ev.get("sec")
                 if isinstance(sec, (int, float)) and 10 <= sec <= 900:
-                    t0 = getattr(self, "_day_tick", None)
-                    if t0:
-                        try:
-                            self.root.after_cancel(t0)
-                        except Exception as _swallow_e:
-                            applog.swallowed(_swallow_e)
-                        self._day_tick = None
+                    self._cancel_after("_day_tick")
                     self._day_deadline = time.time() + float(sec)
                     self._day_tick_loop()
         elif t == "vote_close":
@@ -1286,7 +1256,7 @@ class MafiaNetMixin:
                 self.mafia_cancel_recruit_btn.pack_forget()
             if hasattr(self, "mafia_start_btn"):
                 self.mafia_start_btn.pack(side="right", padx=(10, 6), pady=8)
-                self.mafia_start_btn.config(text="📢 참가자 모집", bg="#b91c1c", activebackground="#7f1d1d", state="normal")
+                self._reset_start_btn()
             self._mafia_pack_lobby_buttons()
             self.mafia_phase_lbl.config(text="")
             self._spectating_host = ev.get("host") if ev.get("started") else None
@@ -1322,24 +1292,12 @@ class MafiaNetMixin:
     def _mafia_stop_disconnect_watch(self):
         """판이 끝나면 접속 감시 예약을 취소한다(단계마다 부르는 _cancel_mafia_timer에는 넣지 않는다 —
         넣으면 낮/밤이 바뀔 때마다 감시가 멈춘다)."""
-        t = getattr(self, "_disconnect_watch_timer", None)
-        if t:
-            try:
-                self.root.after_cancel(t)
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
-        self._disconnect_watch_timer = None
+        self._cancel_after("_disconnect_watch_timer")
 
     def _mafia_start_disconnect_watch(self):
         """게임 시작 시 1회 호출 — 이후 mafia_active인 동안 스스로 재예약되며 계속 돈다.
         이전 판의 예약이 남아 있으면 먼저 취소해 감시 루프가 둘이 되지 않게 한다."""
-        t = getattr(self, "_disconnect_watch_timer", None)
-        if t:
-            try:
-                self.root.after_cancel(t)
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
-            self._disconnect_watch_timer = None
+        self._cancel_after("_disconnect_watch_timer")
         self._mafia_poll_disconnects()
 
     def _mafia_poll_disconnects(self):
@@ -1446,18 +1404,11 @@ class MafiaNetMixin:
         self._disconnect_watch_timer = self.root.after(4000, self._mafia_poll_disconnects)
 
     def _cancel_mafia_timer(self):
-        for attr in ("_mafia_timer", "_day_tick", "_night_tick", "_ai_vote_timer",
-                     "_force_tally_timer", "_revote_deadline", "_defense_deadline",
-                     "_defense_end_timer", "_defense_fallback_timer", "_defense_popup10",
-                     "_tick_vote", "_defense_vote_tick", "_night_pick_tick",
-                     "_defense_client_guard", "_defense_ticker"):
-            t = getattr(self, attr, None)
-            if t:
-                try:
-                    self.root.after_cancel(t)
-                except Exception as _swallow_e:
-                    applog.swallowed(_swallow_e)
-                setattr(self, attr, None)
+        self._cancel_after("_mafia_timer", "_day_tick", "_night_tick", "_ai_vote_timer",
+                           "_force_tally_timer", "_revote_deadline", "_defense_deadline",
+                           "_defense_end_timer", "_defense_fallback_timer", "_defense_popup10",
+                           "_tick_vote", "_defense_vote_tick", "_night_pick_tick",
+                           "_defense_client_guard", "_defense_ticker")
 
     def _sync_ai_alive(self):
         """v1.11 — core의 alive 정보를 PlayerAgent.alive에 동기화.

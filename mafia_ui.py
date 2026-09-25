@@ -23,10 +23,17 @@ from mafia_ui_ai import MafiaAIChatMixin
 class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMixin, MafiaVoteMixin, MafiaAIChatMixin):
     """마피아 게임방 UI 믹스인 — 위 믹스인들을 합치고 로비·게임 시작/종료를 담당한다."""
 
+    def _conn_peer_count(self):
+        """지금 연결된 상대 수. 피어 표는 다른 스레드가 고치므로 락을 잡고 센다(설정 창을 여는 순간 RuntimeError 방지)."""
+        eng = self.engine
+        with eng.plock:
+            return sum(1 for p in eng.peers.values() if p.get("last", 0))
+
     def mafia_ready(self):
         self.core = GameCore("mafia-room")
         self.ai = AIDirector()
         self.ai.on_utt = self._on_ai_utt
+        self.ai.epoch_fn = lambda: getattr(self, "_game_epoch", 0)      # v1.117 — 발언은 '요청한 때'의 판 번호를 달고 온다
         self._mafia_timer = None
         self.mafia_active = False
         self.mafia_history = []           # 게임방 기록(가상방 — 랜톡 로그 파일에 저장 안 함)
@@ -94,7 +101,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         # ── 1. 참가자 카드 ──
         pc = section(win, "참가자 구성")
         pc.pack(fill="x", padx=18)
-        conn_peers = max(0, len([p for p in self.engine.peers.values() if p.get("last", 0)]))
+        conn_peers = self._conn_peer_count()
         r1 = row(pc, "인간 참가자")
         tk.Label(r1, text=f"{conn_peers + 1}명 (나 + 연결 {conn_peers}명)", fg=M_TEXT_LIGHT,
                  bg="#232630", font=FONT_SM).pack(side="right")
@@ -113,7 +120,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         # 다른 사람이 참가 신청을 해도 반영이 안 돼 인원을 초과 배정할 수 있었다.
         # 클릭할 때마다 현재 연결 인원 기준으로 다시 계산.
         def _ai_cap_now():
-            conn_now = max(0, len([p for p in self.engine.peers.values() if p.get("last", 0)]))
+            conn_now = self._conn_peer_count()
             return min(len(ALL_PERSONAS), MAX_PLAYERS - 1 - conn_now)
         def _bump(d):
             v = min(_ai_cap_now(), max(1, ai_var.get() + d))
@@ -345,7 +352,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
                 if hasattr(self, "mafia_cancel_recruit_btn"):
                     self.mafia_cancel_recruit_btn.pack_forget()
                 if hasattr(self, "mafia_start_btn"):
-                    self.mafia_start_btn.config(text="📢 참가자 모집", bg="#b91c1c", activebackground="#7f1d1d", state="normal")
+                    self._reset_start_btn()
                 self._mafia_pack_lobby_buttons()
                 self.mafia_phase_lbl.config(text="")
                 self.add_mafia_system("📢 모집 중이던 방장과의 연결이 끊겨 모집을 종료했습니다.", local=True)
@@ -536,7 +543,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
 
         self.mafia_active = True
         self.mafia_host_mode = True
-        self.mafia_start_btn.configure(text="[게임 진행 중]", state="disabled")
+        self._start_btn_running()
         self._mafia_maximize_window()   # v1.49 — 게임 시작 시 창을 1400x800으로 설정
         self.add_mafia_system(
             f"🎲 게임 시작 — 확정 참가자({len(self.core.players)}명): " + ", ".join(self.core.players.keys()))
@@ -609,11 +616,15 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
                 else:
                     self._mafia_send_private(pname, "hdm", target=pname, text=msg, role=prole, tok=tok)
         self.add_mafia_system("(AI 참가자가 순차 입장합니다…)")
-        threading.Thread(target=self._host_then_bootstrap_bg, daemon=True).start()
+        threading.Thread(target=self._host_then_bootstrap_bg, args=(self._game_epoch,), daemon=True).start()
 
-    def _host_then_bootstrap_bg(self):
-        """(사회자 즉시 개회) → AI 부트(느림, 백그라운드) → 완료 알림."""
-        self._host_opening_now()
+    def _host_then_bootstrap_bg(self, ep=None):
+        """(사회자 즉시 개회) → AI 부트(느림, 백그라운드) → 완료 알림. v1.117 — 사회자 LLM이 늦는 사이 판이 끝났거나 새 판이
+        시작됐으면(판 번호가 바뀜) 이전 판의 스레드가 새 판의 AI·낮 타이머를 덮어쓰지 않게 그만둔다."""
+        cur = lambda: ep is None or ep == getattr(self, "_game_epoch", 0)
+        self._host_opening_now(ep)
+        if not (cur() and self.mafia_active):
+            return
         players_desc = ", ".join(self.core.players.keys())
         need = max(1, getattr(self, "mafia_ai_count", 4))
         ai_names = [n for n, p in self.core.players.items() if p.get("is_ai")]
@@ -624,6 +635,9 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             personas_to_spawn = [by_name[n] for n in ai_names]
         oks = self.ai.spawn_all(personas_to_spawn, self.engine.name,
                                 players_desc, names=ai_names)
+        if not (cur() and self.mafia_active):
+            self.ai.players = []          # 부팅하는 동안 판이 끝났다 — 옛 에이전트를 로비에 남기지 않는다
+            return
         # AI 스폰 완료 후 core의 역할 정보를 AI 객체들에게 배정!
         self.ai.assign_roles({n: p["role"] for n, p in self.core.players.items()}, self.core, self._claims_for)
         fail = [n for n, ok in oks if not ok]
@@ -631,7 +645,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             self.root.after(0, lambda: self.add_mafia_system(
                 f"⚠ AI 부트 실패: {', '.join(fail)} — 해당 AI는 말은 못 하지만 표결·밤 행동은 무작위로 진행합니다."))
 
-    def _host_opening_now(self):
+    def _host_opening_now(self, ep=None):
         text = host_llm_cached(
             "너는 마피아 게임 사회자다. 한국어로 2문장 이내, 경쾌하고 담백한 톤.\n"
             "절대 다른 주제로 샘지 마시오. **개회 선언만** 하세요. 룰 설명 금지.\n"
@@ -641,11 +655,11 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         text = clean_llm_dialect(text) or "1일차 낮이 되었습니다. 서로를 관찰하며 의심스러운 사람을 찾아보세요."
         text = sanitize_player_names(text, list(self.core.players.keys()))
         # Tk 객체는 메인 스레드에서만 조작 — after로 메인스레드에 넘김
-        self.root.after(0, lambda: self.add_mafia_host(text))
-        self.root.after(30, lambda: self.finish_host_opening())
+        self.root.after(0, lambda: self.add_mafia_host(text) if (ep is None or ep == self._game_epoch) and self.mafia_active else None)
+        self.root.after(30, lambda: self.finish_host_opening(ep))
 
-    def finish_host_opening(self):
-        if not self.mafia_active:
+    def finish_host_opening(self, ep=None):
+        if not self.mafia_active or (ep is not None and ep != self._game_epoch):
             return
         self.start_day_timer()
         self._trigger_ai_reactions(
@@ -691,6 +705,8 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         self.add_mafia_system(f"🎭 정체 공개 — {reveals}", local=True)
         # v1.116 — 승리 멘트는 방송하지 않는다: end를 받은 참가자는 이미 로비로 돌아가 방장 이름을 잊어 뒤따라온 hsay를
         # 방장이 보낸 것으로 인정하지 못하고 버렸다(참가자 화면에만 사회자 멘트가 없던 원인). 참가자는 _client_game_end가 직접 그린다.
+        self._ai_utt_q = []                     # v1.117 — 끝난 판에서 대기 중이던 AI 발언이 종료 안내 뒤에 뜨거나 후일담으로 나가지 않게
+        self._game_epoch = getattr(self, "_game_epoch", 0) + 1      # (아래 후일담 요청은 새 번호를 달고 나간다)
         self.add_mafia_host(
             f"{emoji} {label} 팀이 승리했습니다. 다들 수고하셨습니다. "
             "다시 시작하려면 [게임 시작]을 눌러 주세요.", local=True)
@@ -719,6 +735,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         self._mafia_broadcast("force_end")
         self._mafia_notify_bystanders_end("force")
         self._ai_utt_q = []                 # v1.113 — 강제로 끝낸 판의 AI 발언이 로비에 계속 뜨지 않게
+        self._game_epoch = getattr(self, "_game_epoch", 0) + 1      # v1.117 — 아직 LLM 응답 중인 AI의 늦은 답도 버린다
         self._epilogue_until = 0
         try:
             self.ai.pending_talk = []
@@ -748,6 +765,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
         # 내가 다시 방장이 되면 _launch_game_with_recruits의 spawn_all이 어차피 통째로
         # 새로 채우므로 지워도 안전하다.
         self.ai.players = []
+        self._defense_in_progress = False      # v1.117 — 변론 중 끝난 판의 표시가 다음 판 1일차에 남지 않게
         self.mafia_active = False
         # 판이 끝나면 방장 신분도 내려놓는다. 그대로 두면 이 PC가 다음 판에서 클라이언트가 됐을 때
         # 방장 전용 이벤트(recruit_start 등)를 '방장에게 온 것'으로 보고 전부 버려 참가 신청 버튼이 안 뜬다.
@@ -763,7 +781,7 @@ class MafiaUIMixin(MafiaViewMixin, MafiaNetMixin, MafiaSecretMixin, MafiaNightMi
             self.mafia_role_btn.pack_forget()
         if hasattr(self, "mafia_force_quit_btn"):
             self.mafia_force_quit_btn.pack_forget()
-        self.mafia_start_btn.configure(text="📢 참가자 모집", bg="#b91c1c", activebackground="#7f1d1d", state="normal")
+        self._reset_start_btn()
         if hasattr(self, "mafia_cancel_recruit_btn"):
             self.mafia_cancel_recruit_btn.pack_forget()
         self.refresh_mafia_phase_label()

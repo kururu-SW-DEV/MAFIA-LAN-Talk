@@ -79,7 +79,31 @@ def has_emoji(text):
     return bool(_EMOJI_RE.search(text or ""))
 
 
+_RENDER_CACHE = {}
+_RENDER_CACHE_MAX = 160
+
+
+def _cached_render(kind, key, make):
+    """v1.117 — 같은 (문구·글꼴·크기·색) 렌더는 다시 하지 않는다. 게임 상단 줄 문구가 매초, 알약 버튼이 단계 전환·마우스
+    호버마다 같은 그림을 PIL로 새로 그리고 있었다. 호출부가 이미지를 고치지 못하게 사본을 돌려준다."""
+    k = (kind,) + key
+    img = _RENDER_CACHE.get(k)
+    if img is None:
+        img = make()
+        if img is None:
+            return None
+        if len(_RENDER_CACHE) >= _RENDER_CACHE_MAX:
+            _RENDER_CACHE.pop(next(iter(_RENDER_CACHE)))      # 가장 오래된 것부터 버린다
+        _RENDER_CACHE[k] = img
+    return img.copy()
+
+
 def render_mixed_text(text, text_font_path, text_size, fg="#ffffff", emoji_px=None):
+    return _cached_render("t", (text, text_font_path, text_size, fg, emoji_px),
+                          lambda: _render_mixed_text(text, text_font_path, text_size, fg, emoji_px))
+
+
+def _render_mixed_text(text, text_font_path, text_size, fg="#ffffff", emoji_px=None):
     """이모지 포함 문자열을 투명 배경 RGBA PIL.Image로 래스터화한다.
     이모지 폰트가 없는 환경이면 None을 반환한다(호출부는 평범한 text=로 폴백)."""
     if not text or not emoji_font_available():
@@ -170,6 +194,14 @@ def measure_content_height(text_font_path, text_size, sample_texts, emoji_px=Non
 
 
 def render_pill(text, text_font_path, text_size, fg, fill_color, radius=10,
+                 pad_x=14, pad_y=8, emoji_px=None, min_content_h=None, min_w=None):
+    return _cached_render("p", (text, text_font_path, text_size, fg, fill_color, radius, pad_x, pad_y, emoji_px,
+                                min_content_h, min_w),
+                          lambda: _render_pill(text, text_font_path, text_size, fg, fill_color, radius,
+                                               pad_x, pad_y, emoji_px, min_content_h, min_w))
+
+
+def _render_pill(text, text_font_path, text_size, fg, fill_color, radius=10,
                  pad_x=14, pad_y=8, emoji_px=None, min_content_h=None, min_w=None):
     """이모지 섞인 문자열을 배경색이 채워진 둥근 사각형('알약') 위에 그려
     RGBA 이미지로 반환한다. Tk 버튼 자체는 각진 사각형만 그릴 수 있어서,

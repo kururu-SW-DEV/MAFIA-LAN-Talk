@@ -78,20 +78,8 @@ class MafiaVoteMixin:
 
     def _cancel_tally_safety_timers(self):
         """투표 집계 관련 안전망 지연 타이머 전원 취소."""
-        ft = getattr(self, "_force_tally_timer", None)
-        if ft:
-            try:
-                self.root.after_cancel(ft)
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
-            self._force_tally_timer = None
-        pvc = getattr(self, "_pending_vote_close", None)
-        if pvc:
-            try:
-                self.root.after_cancel(pvc)
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
-            self._pending_vote_close = None
+        self._cancel_after("_force_tally_timer")
+        self._cancel_after("_pending_vote_close")
 
     def _schedule_tally(self, delay_ms=300):
         """v1.34: 개표 중복 호출 및 사회자 최후변론 멘트 이중 출력 방지 단일 스케줄러."""
@@ -143,13 +131,7 @@ class MafiaVoteMixin:
         # 투표 창이 열리면 상단 안내를 "토론 중"에서 "개표 중"으로 넘긴다. 예전에는 원격 참가자의 낮 카운트다운 틱이 계속 돌아
         # (호스트는 open_the_vote가 취소했지만 클라이언트는 취소하지 않았다) 투표 중에도 "토론 중 — 남은 …"이 남아 있었다.
         self._vote_window = True
-        t = getattr(self, "_day_tick", None)
-        if t:
-            try:
-                self.root.after_cancel(t)
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
-            self._day_tick = None
+        self._cancel_after("_day_tick")
         self.refresh_mafia_phase_label()
         self._vote_popup_open_ts = time.time()   # v1.40 — 유저 우선 유예시간 기준점
         # v1.13/v1.34 — 사망자는 투표 팝업 자체가 열리지 않게(유령방 안내로 대체), AI 투표는 정상 진행
@@ -497,13 +479,7 @@ class MafiaVoteMixin:
         # _cancel_vote_popup()이 직접 호출되는 경로는 그걸 안 거쳐서, 살아남은
         # 이 타이머가 0.5초 뒤 엉뚱하게 떠 있는 다음 오버레이(밤 연출 등)를
         # 잘못 닫아버릴 수 있었다.
-        pvc = getattr(self, "_pending_vote_close", None)
-        if pvc:
-            try:
-                self.root.after_cancel(pvc)
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
-            self._pending_vote_close = None
+        self._cancel_after("_pending_vote_close")
         self._vote_lbl = None
         self._vote_btns = {}
         self._vote_abstain_btn = None
@@ -662,6 +638,8 @@ class MafiaVoteMixin:
     def _tally_full(self):
         """문서 기획 개표 상태머신 — 동률 재투표 1회 → 최후 변론 → 찬반 투표.
         기존 _tally_and_reveal(단순 개표)은 유지, 설정창 '표준 상태머신' 켜면 이쪽 사용."""
+        if not self.mafia_active:
+            return              # v1.117 — 700ms 안에 판이 끝났다(끊김 승패 확정·강제 종료) — 로비에 개표 결과를 띄우지 않는다
         mode, data = self.core.tally_votes_full()
         if mode == "none":
             self.add_mafia_system("🗳 유효표 없음 — 전원 기권, 처형 무효.")
@@ -759,13 +737,7 @@ class MafiaVoteMixin:
         self._revote_tick = self.root.after(1000, _tick_revote)
 
         def _cancel_revote_tick():
-            t = getattr(self, "_revote_tick", None)
-            if t:
-                try:
-                    self.root.after_cancel(t)
-                except Exception as _swallow_e:
-                    applog.swallowed(_swallow_e)
-                self._revote_tick = None
+            self._cancel_after("_revote_tick")
         self._wrap_overlay_close_with(_cancel_revote_tick)
         row = tk.Frame(body, bg=C_CARD); row.pack(fill="x", padx=18, pady=(0, 8))
         me_now = getattr(self.engine, "name", None)
@@ -787,7 +759,6 @@ class MafiaVoteMixin:
             radius=6, pad_x=14, pad_y=4
         )
         skip.pack(pady=(4, 10))
-        self._revote_skip_btn = skip
 
     def _force_revote_tally(self):
         """유저가 재투표에 무응답 30초 — 기권 처리하고 개표."""
@@ -808,6 +779,8 @@ class MafiaVoteMixin:
     def _ai_revote_fast(self, tied, pl):
         """v1.06 — AI 재투표 즉시 결정 (동률 후보 중 1명). 누락 없이 반영."""
         import random as _r
+        if not (self.mafia_active and pl.alive) or pl.name in self.core.votes:
+            return              # v1.117 — 판이 끝났거나 이미 표를 낸 AI는 다시 쓰지 않는다
         # v1.40 — 유저 우선: 유저가 아직 재투표 전이면 잠시 대기 후 재시도
         if self._ai_vote_user_should_wait():
             self.root.after(400, lambda: self._ai_revote_fast(tied, pl))
@@ -839,13 +812,7 @@ class MafiaVoteMixin:
             if getattr(self, "_revote_tally_scheduled", False):
                 return
             self._revote_tally_scheduled = True
-            dl = getattr(self, "_revote_deadline", None)
-            if dl:
-                try:
-                    self.root.after_cancel(dl)
-                except Exception as _swallow_e:
-                    applog.swallowed(_swallow_e)
-                self._revote_deadline = None
+            self._cancel_after("_revote_deadline")
             if self._mafia_is_host():
                 self._mafia_broadcast("vote_close")   # v1.95 — 재투표 창도 닫는다(1차 개표만 보내고 있었다)
             self.root.after(700, self._tally_full)   # 2차 개표
@@ -897,7 +864,6 @@ class MafiaVoteMixin:
                 self.root.after(delay, lambda p=defendant_ai, first=(idx == 0): self._ai_defense(p, first))
         # 나(유저)가 피고인이면 직접 타이핑 변론 — 팝업은 변론 종료 후 뜸.
         self._ai_defense_voted = False
-        self._defense_popup_shown = False
         self._poll_defense_ui_queue()
         # v1.23 — 변론 종료(60초) 시: 찬반 팝업 + AI 찬반 투표 개시 + 30초 찬반 안전망
         self._defense_fallback_timer = self.root.after(6_000, lambda: self._defense_fallback(name))
@@ -910,10 +876,9 @@ class MafiaVoteMixin:
         # (기존 '변론문이 채팅에 뜨면 찬반 개시' → '변론 60초 종료 후 개시'로 재정렬)
 
     def _start_defense_votes(self, name):
-        """v1.23 — 변론 기간(60초) 종료 후 찬반 투표 개시(팝업+AI 표)."""
-        self._unlock_defense_entry()
+        """v1.23 — 변론 기간(60초) 종료 후 찬반 투표 개시(팝업+AI 표). v1.117 — 발언 잠금은 판결까지 유지한다(방장 포함)."""
+        self._unlock_defense_entry(keep_lock=True)
         self.add_mafia_system(f"⚖ 변론 종료 — 찬반 투표를 부탁합니다 ({DEFENSE_VOTE_WINDOW}초 이내)")
-        self._defense_popup_shown = True
         if self._mafia_is_host():
             self._mafia_broadcast("defense_vote_open", name=name)
         me_name = getattr(self.engine, "name", None)
@@ -948,6 +913,7 @@ class MafiaVoteMixin:
 
     def _poll_defense_ui_queue(self):
         """v1.20 — 변론 UI 큐 드레인(메인스레드 전용). 채팅 반영 후 AI 찬반 개시."""
+        import queue as _q
         try:
             while True:
                 kind, name, t = self._defense_ui_q.get_nowait()
@@ -959,6 +925,8 @@ class MafiaVoteMixin:
                     # v1.23 — 변론 발화는 채팅 반영만 함(찬반 개시는 60초 후 별도)
                     self._defense_has_spoken = True
                     self.add_mafia_ai(name, t)   # 로컬 표시 + 원격 참가자에게 asay 방송
+        except _q.Empty:
+            pass
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
         if getattr(self, "_defense_ui_q", None) is not None and getattr(self.core, "defendant", None):
@@ -1031,7 +999,6 @@ class MafiaVoteMixin:
             if ok:
                 # v1.47 — 대상(찬성/반대) 비공개 — 본투표 익명화와 동일 원칙 적용
                 self.add_mafia_system(f"⚖ {pl.name}님 찬반 표 접수 (익명) · {self._defense_progress_text()}")
-                self._broadcast_defense_progress(pl.name)
             self._maybe_resolve_defense(defendant)
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
@@ -1201,22 +1168,10 @@ class MafiaVoteMixin:
 
     def _cancel_defense_popup10(self):
         self._defense_popup10_cancelled = True
-        t = getattr(self, "_defense_popup10", None)
-        if t:
-            try:
-                self.root.after_cancel(t)
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
-            self._defense_popup10 = None
+        self._cancel_after("_defense_popup10")
 
     def _cancel_defense_vote_tick(self):
-        t = getattr(self, "_defense_vote_tick", None)
-        if t:
-            try:
-                self.root.after_cancel(t)
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
-            self._defense_vote_tick = None
+        self._cancel_after("_defense_vote_tick")
 
     def _cast_defense(self, name, yes):
         me = getattr(self.engine, "name", None)
@@ -1236,7 +1191,6 @@ class MafiaVoteMixin:
         self._play_mafia_sound("vote_cast")
         if self._mafia_is_host():
             self.add_mafia_system(f"⚖ {me}님 찬반 표 접수 (익명) · {self._defense_progress_text()}")
-            self._broadcast_defense_progress(me)
             # 즉시 개표 체크(이전: 500ms after만 — AI 표 누락 시 멈춤)
             self._maybe_resolve_defense(name)
         else:
@@ -1271,13 +1225,7 @@ class MafiaVoteMixin:
         self._clear_defense_deadline()
         # v1.32 — 피고인 10초 자동닫힘 타이머 정리
         self._defense_popup10_cancelled = True
-        t10 = getattr(self, "_defense_popup10", None)
-        if t10:
-            try:
-                self.root.after_cancel(t10)
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
-            self._defense_popup10 = None
+        self._cancel_after("_defense_popup10")
         if not (self.core.players.get(name) or {}).get("alive", True):
             # v1.100 — 피고인이 변론 도중 나가거나 접속이 끊겨 이미 사망 처리됐다: 처형·직업 공개 없이 재판을 무효로 한다.
             self.core.defendant = None
@@ -1349,14 +1297,6 @@ class MafiaVoteMixin:
 
         _th.Thread(target=worker, daemon=True).start()
 
-    def _ai_defense_vote(self, pl, rr):
-        try:
-            txt = (pl.say(f"[찬반 투표] {self.core.defendant} 님 처형에 찬성하는가? '찬성' 또는 '반대' 한 단어로.") or "").strip()
-            yes = ("찬성" in txt) or ("반대" not in txt and rr.random() < .5)
-            self.core.cast_defense_vote(pl.name, yes)
-        except Exception as _swallow_e:
-            applog.swallowed(_swallow_e)
-
     def _host_after_removal(self, name):
         """v1.100 — 참가자가 나가거나 끊겨 사망 처리된 뒤 진행 중인 단계를 다시 판단한다. 예전에는 승패만
         다시 봐서, 그 사람 표만 남은 투표가 시한까지 기다리거나 죽은 피고인의 재판이 그대로 진행돼
@@ -1393,6 +1333,8 @@ class MafiaVoteMixin:
             # 재투표 중에는 core.phase가 DAY가 아니라 cast_vote가 거절하므로
             # 호스트 자신의 _cast_revote와 똑같이 직접 기록한다(동률 후보만 허용).
             if target and target not in self._revote_tied:
+                if voter != getattr(self.engine, "name", None):     # v1.117 — 말없이 버리면 참가자가 '접수 확인 없음' 경고를 보게 된다
+                    self._mafia_send_private(voter, "sys", text="✅ 방장이 내 투표를 받았지만 반영하지 못했습니다 (동률 후보가 아님)")
                 return
             if target:
                 self.core.votes[voter] = target
@@ -1440,7 +1382,6 @@ class MafiaVoteMixin:
                 self._mafia_send_private(voter, "sys", text=_late)
             return           # v1.103 — 반영되지 않은 표(피고인 본인 등)를 '접수'로 방송하지 않는다
         self.add_mafia_system(f"⚖ {voter}님 찬반 표 접수 (익명) · {self._defense_progress_text()}")
-        self._broadcast_defense_progress(voter)
         if voter != getattr(self.engine, "name", None):
             self._mafia_send_private(voter, "sys", text="✅ 방장이 내 찬반 표를 접수했습니다 (익명)")
         self._maybe_resolve_defense(name)

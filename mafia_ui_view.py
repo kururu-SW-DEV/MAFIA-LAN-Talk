@@ -5,6 +5,7 @@ mafia_ui.MafiaUIMixin이 다른 믹스인과 합쳐 쓴다. 모듈 전역 이름
 mafia_ui_common에서 가져온다.
 """
 from mafia_ui_common import *  # noqa: F401,F403
+from winapi import force_korean_ime
 
 
 class MafiaViewMixin:
@@ -402,6 +403,25 @@ class MafiaViewMixin:
         self.root.after(duration_ms, _close)
         return _close
 
+    def _reset_start_btn(self):
+        """[참가자 모집] 버튼을 처음 상태(붉은색·눌러서 모집 시작)로 되돌린다."""
+        self.mafia_start_btn.configure(text="📢 참가자 모집", bg="#b91c1c", activebackground="#7f1d1d", state="normal")
+
+    def _start_btn_running(self):
+        self.mafia_start_btn.configure(text="[게임 진행 중]", state="disabled")
+
+    def _cancel_after(self, *attrs):
+        """v1.117 — 이 객체의 after 예약 핸들(속성 이름)들을 취소하고 None으로 비운다(없거나 이미 지난 것은 무시).
+        게임 곳곳에 복붙돼 있던 '핸들 꺼내서 try/after_cancel/None' 블록을 한 곳으로 모았다."""
+        for a in attrs:
+            t = getattr(self, a, None)
+            if t:
+                try:
+                    self.root.after_cancel(t)
+                except Exception as _swallow_e:
+                    applog.swallowed(_swallow_e)
+            setattr(self, a, None)
+
     def _refresh_mafia_bar_pill_bg(self):
         """게임바(mafia_bar) 배경색이 바뀔 때마다(밤/낮, 변론 스포트라이트 등)
         둥근 버튼들의 '투명해 보이는' 네 귀퉁이도 새 배경색에 맞춰 다시
@@ -520,6 +540,7 @@ class MafiaViewMixin:
             sound_type="trial"
         )
         self._bar_applied = None          # 변론이 끝나면 단계 색을 다시 적용한다
+        self._defense_bar_on = True
         self._refresh_phase_badge()
         if hasattr(self, "mafia_bar"):
             self.mafia_bar.configure(bg=self._DEFENSE_BAR[0])
@@ -568,25 +589,27 @@ class MafiaViewMixin:
         self._defense_tick_sec = sec - 1
         self._defense_ticker = self.root.after(1000, lambda: self._tick_defense_loop(name))
 
-    def _unlock_defense_entry(self):
-        """변론 종료 시 발언권 잠금 해제 및 상단 바 복원."""
-        self._defense_entry_locked = False
-        t = getattr(self, "_defense_ticker", None)
-        if t:
-            try: self.root.after_cancel(t)
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
-            self._defense_ticker = None
+    def _unlock_defense_entry(self, keep_lock=False):
+        """변론 종료 시 발언권 잠금 해제 및 상단 바 복원. keep_lock=True(찬반 투표 시작)면 변론 카운트다운과 색만 정리하고
+        발언 잠금은 판결까지 유지한다 — v1.117: 예전에는 방장만 찬반 15초 동안 채팅이 풀려 있었다(참가자는 잠김)."""
+        self._defense_entry_locked = bool(keep_lock)
+        self._defense_lock_vote = bool(keep_lock)
+        self._cancel_after("_defense_ticker")
+        _st = "disabled" if keep_lock else "normal"
         if hasattr(self, "entry"):
-            try: self.entry.configure(state="normal")
+            try: self.entry.configure(state=_st)
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
         if hasattr(self, "send_btn"):
-            try: self.send_btn.configure(state="normal")
+            try: self.send_btn.configure(state=_st)
             except Exception as _swallow_e:
                 applog.swallowed(_swallow_e)
-        self._bar_applied = None
-        self._apply_bar_palette(force=True)      # 변론이 끝났으니 변론 색을 풀고 단계 색으로
+        if keep_lock and hasattr(self, "status"):
+            self.status.set("🗳 찬반 투표 중 — 판결이 날 때까지 아무도 발언할 수 없습니다")
+        if getattr(self, "_defense_bar_on", False):      # v1.117 — 변론 색을 칠했을 때만 푼다(아니면 곧 이어질 단계 색 적용과 겹쳐 버튼을 두 번 다시 그렸다)
+            self._defense_bar_on = False
+            self._bar_applied = None
+            self._apply_bar_palette(force=True)      # 변론이 끝났으니 변론 색을 풀고 단계 색으로
         self.refresh_mafia_phase_label()
 
     def _show_verdict_visuals(self, result, name, role2, yes, no):
@@ -680,11 +703,14 @@ class MafiaViewMixin:
         self._sync_burn_btn_visual()
         self.status.set("마피아 게임방 — [참가자 모집]을 누르세요")
         self.entry.focus_set()
+        self.root.after(60, lambda: force_korean_ime(self.entry))     # v1.117 — 한글 채팅이 가장 많은 게임방에서도 한글 입력으로 시작
         # 로비에서 이미 시작된 게임이 있어도 대화가 보이도록 임시 허용
         prev_active = self.mafia_active
         self.mafia_active = True
-        self._mafia_rerender()
-        self.mafia_active = prev_active
+        try:
+            self._mafia_rerender()
+        finally:
+            self.mafia_active = prev_active      # v1.117 — 다시 그리다 예외가 나도 로비에 True가 남지 않게
         self.refresh_mafia_phase_label()
         self._update_pin_banner()
         self._refresh_list()
@@ -718,6 +744,10 @@ class MafiaViewMixin:
         for rec in self.mafia_history:
             self._render_mafia_record(rec)
         self._finish_render(force_bottom=True)
+        # v1.117 — 방을 켜 둔 채 여러 판을 하면 이어 그린 기록·캔버스 항목이 계속 쌓인다(방을 바꾸거나 창 폭이 바뀔 때만 500개로 줄었다).
+        # 상한을 100개 넘기면 최근 기록으로 한 번 다시 그린다.
+        if len(getattr(self, "_active_chat_records", None) or ()) > self._MAFIA_HISTORY_CAP + 100:
+            self._mafia_rerender()
 
     def _render_mafia_record(self, rec):
         if rec.get("kind") == "system":
@@ -845,7 +875,17 @@ class MafiaViewMixin:
                 # "생존자 목록 → 상태바"로 뒤집힌 채 굳어버렸다(실사용 지적 — 재현 확인).
                 # pack은 이미 매핑된 위젯에 다시 불러도 옵션(특히 before)대로 위치를 다시
                 # 잡아주므로, 매번 다시 불러 mafia_bar 바로 아래라는 위치를 스스로 바로잡는다.
-                lbl.pack(fill="x", before=self.chat_wrap)
+                # v1.117 — 2초마다 무조건 다시 pack하면 body 전체 배치를 매번 다시 계산한다. 순서(상태 바 → 이 줄 → 채팅)가 이미
+                # 맞으면 건드리지 않는다.
+                try:
+                    sl = self.mafia_bar.master.pack_slaves()
+                    in_order = (lbl.winfo_manager() == "pack" and lbl in sl and self.mafia_bar in sl
+                                and self.chat_wrap in sl
+                                and sl.index(self.mafia_bar) + 1 == sl.index(lbl) == sl.index(self.chat_wrap) - 1)
+                except Exception:
+                    in_order = False
+                if not in_order:
+                    lbl.pack(fill="x", before=self.chat_wrap)
             else:
                 lbl.pack_forget()
         except Exception as _swallow_e:
@@ -908,17 +948,23 @@ class MafiaViewMixin:
                 return False
             now = time.time()
             silent = now - last
-            if silent > self._HOST_GIVEUP_SEC:
+            addr = self._mafia_peer_of(host)
+            p = self.engine.get_peer(addr) if addr else None
+            gone = p is None or now - p.get("last", 0) > PEER_TIMEOUT
+            if silent > self._HOST_GIVEUP_SEC and (getattr(self, "_host_hb_seen", False) or gone):
                 self._host_warned = False
+                try:      # v1.117 — 방장 화면만 멈췄던 경우 방장이 나를 계속 생존자로 세지 않게 떠난다고 알린다(나가기 버튼과 같은 방식)
+                    tok = getattr(self, "_my_tok", None)
+                    self._mafia_send_private(host, "leave_game", name=getattr(self.engine, "name", None),
+                                             **({"tok": tok} if tok else {}))
+                except Exception as _swallow_e:
+                    applog.swallowed(_swallow_e)
                 self.add_mafia_system("⚠ 방장과의 연결이 끊겨 게임을 종료하고 로비로 돌아갑니다.")
                 self._client_reset_to_lobby()
                 self._refresh_mafia_roster()
                 return True
             if silent >= self._HOST_WARN_SEC and not getattr(self, "_host_warned", False):
                 # hb를 보내는 방장(v1.95+)이거나 접속 목록에서도 방장이 안 보일 때만 — 옛 방장은 조용한 구간에 이벤트가 없다
-                addr = self._mafia_peer_of(host)
-                p = self.engine.get_peer(addr) if addr else None
-                gone = p is None or now - p.get("last", 0) > PEER_TIMEOUT
                 if getattr(self, "_host_hb_seen", False) or gone:
                     self._host_warned = True
                     self.add_mafia_system(

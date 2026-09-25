@@ -39,7 +39,9 @@ class MafiaAIChatMixin:
 
         # --- v1.39: 최후 변론 중 관전자 발언권 제한 ---
         if getattr(self, "_defense_entry_locked", False):
-            self.add_mafia_system("🚫 피고인의 최후 변론 시간입니다. 관전자는 발언할 수 없습니다.", local=True)
+            self.add_mafia_system(
+                "🚫 찬반 투표 중입니다. 판결이 날 때까지 발언할 수 없습니다." if getattr(self, "_defense_lock_vote", False)
+                else "🚫 피고인의 최후 변론 시간입니다. 관전자는 발언할 수 없습니다.", local=True)
             return
         # 밤 행동 (역할자만)
         if self.core.phase == Phase.NIGHT:
@@ -313,7 +315,7 @@ class MafiaAIChatMixin:
         pl.bluffed = True
         self._bluff_count = getattr(self, "_bluff_count", 0) + 1
         self.ai.say_one_async(pl, lambda _p, _pr=prompt: _pr)
-        self.root.after(30_000, lambda p=pl: self._bluff_rollback(p))
+        self.root.after(30_000, lambda p=pl, e=getattr(self, "_game_epoch", 0): self._bluff_rollback(p, ep=e))
         return True
 
     # v1.114 — 시민 진영도 거짓말을 한다: 시민·의사·경찰 AI가 다른 직업을 자처(마피아의 표적을 빗나가게 하는 미끼, 혼란 유발)
@@ -350,14 +352,14 @@ class MafiaAIChatMixin:
         pl.bluffed = True
         self._town_bluff_count = getattr(self, "_town_bluff_count", 0) + 1
         self.ai.say_one_async(pl, lambda _p, _pr=prompt: _pr)
-        self.root.after(30_000, lambda p=pl: self._bluff_rollback(p, town=True))
+        self.root.after(30_000, lambda p=pl, e=getattr(self, "_game_epoch", 0): self._bluff_rollback(p, town=True, ep=e))
         return True
 
-    def _bluff_rollback(self, pl, town=False):
+    def _bluff_rollback(self, pl, town=False, ep=None):
         """30초 안에 거짓 커밍아웃이 실제로 채팅에 나오지 않았으면(LLM 실패·busy 등) 횟수를 되돌린다 — 안 그러면 마피아가
         둘뿐인 판에서 두 번 실패하는 것만으로 이 기능이 그 판 내내 꺼진다."""
-        if not getattr(pl, "bluffed", False):
-            return
+        if not getattr(pl, "bluffed", False) or (ep is not None and ep != getattr(self, "_game_epoch", 0)):
+            return                      # (다른 판의 롤백은 새 판의 횟수를 건드리지 않는다)
         if pl.name in (getattr(self, "_police_claims", None) or {}) or pl.name in (getattr(self, "_doctor_claims", None) or {}):
             return                      # 실제로 커밍아웃이 기록됨 — 소모가 맞다
         pl.bluffed = False
@@ -599,11 +601,12 @@ class MafiaAIChatMixin:
     _AI_UTT_MIN_GAP = 5.0        # v1.107 — AI 발언 사이 최소 간격(초). 글자 수만큼 더 늘어난다(사람이 치는 시간처럼)
     _AI_UTT_STALE = 45.0         # 큐에서 이만큼 묵은 발언은 버린다(상황이 지나갔다)
 
-    def _on_ai_utt(self, name, color, text):
-        """AI 발언을 곧바로 띄우지 않고 큐에 넣어 천천히 하나씩 내보낸다(우르르 쏟아지지 않게)."""
+    def _on_ai_utt(self, name, color, text, epoch=None):
+        """AI 발언을 곧바로 띄우지 않고 큐에 넣어 천천히 하나씩 내보낸다(우르르 쏟아지지 않게). epoch는 발언을 요청한 때의
+        판 번호(없으면 지금 판) — 판이 끝난 뒤 뒤늦게 도착한 답은 다른 번호라 버려진다."""
         def _enqueue():
             q = self.__dict__.setdefault("_ai_utt_q", [])
-            q.append((time.time(), name, color, text, getattr(self, "_game_epoch", 0)))
+            q.append((time.time(), name, color, text, getattr(self, "_game_epoch", 0) if epoch is None else epoch))
             self._pump_ai_utt()
         self.root.after(0, _enqueue)
 

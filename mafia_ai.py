@@ -531,9 +531,6 @@ class PlayerAgent:
         return (True, text) if text else (False, None)
 
 
-# 이전 이름 호환
-SubAgentPlayer = PlayerAgent
-
 
 # ============================================================
 # 3) AI 매니저 — 병렬 스폰/대사 큐
@@ -544,6 +541,7 @@ class AIDirector:
     def __init__(self):
         self.players = []
         self.on_utt = None
+        self.epoch_fn = None
         self.pending_talk = []
 
     def spawn_all(self, personas, host_name, players_desc, names=None):
@@ -628,10 +626,14 @@ class AIDirector:
                 th.start()
 
     def _say_worker(self, pl, prompt_factory):
+        ep = self.epoch_fn() if self.epoch_fn else None      # 요청 시점의 판 번호 — LLM 답이 늦게 와도 그 판의 발언임을 안다
         prompt = prompt_factory(pl)
         text = pl.say(prompt)
         if text and self.on_utt:
-            self.on_utt(pl.name, pl.color, text)
+            if ep is None:
+                self.on_utt(pl.name, pl.color, text)
+            else:
+                self.on_utt(pl.name, pl.color, text, ep)
 
     def stop_all(self):
         for pl in self.players:

@@ -37,7 +37,7 @@ check("낮·개표·밤 색이 모두 서로 다름", len({seen["낮"], seen["�
 check("VOTE 단계는 개표색", seen["투표"] == seen["개표"])
 app._defense_in_progress = True
 app._apply_bar_palette("night"); 
-app._bar_applied = None; app.mafia_bar.configure(bg=app._DEFENSE_BAR[0])
+app._bar_applied = None; app._defense_bar_on = True; app.mafia_bar.configure(bg=app._DEFENSE_BAR[0])
 app.core.phase = Phase.DAY; app._vote_window = False
 app.refresh_mafia_phase_label(); root.update()
 check("변론 중에는 변론 색을 덮어쓰지 않음", bg() == app._DEFENSE_BAR[0])

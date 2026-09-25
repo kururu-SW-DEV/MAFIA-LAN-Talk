@@ -1174,23 +1174,29 @@ class Engine:
     # ---------- 루프 ----------
     def _presence_loop(self):
         while not self._stop.is_set():
-            with self.plock:
-                for key in self.static:
-                    if key not in self.peers:
-                        ip, port = key
-                        self.peers[key] = {
-                            "name": (self.get_alias(("dm", ip, port))
-                                    or self.get_known_name(("dm", ip, port)) or ip),
-                            "ip": ip, "port": port, "last": 0, "static": True}
-            pkt = self._presence_packet()
-            self._send_dict(pkt, "255.255.255.255", self.port)
-            with self.plock:
-                statics = [k for k, v in self.peers.items() if v.get("static")]
-            for (ip, port) in statics:
-                self._send_dict(pkt, ip, port)
-            self._probe_stale_peers()
-            self._prune()
+            try:
+                self._presence_tick()
+            except Exception as e:        # v1.117 — 한 번의 예외로 이 스레드가 죽으면 이 PC가 모두에게 영구히 오프라인으로 보인다
+                applog.swallowed(e)
             self._stop.wait(PRESENCE_INTERVAL)
+
+    def _presence_tick(self):
+        with self.plock:
+            for key in self.static:
+                if key not in self.peers:
+                    ip, port = key
+                    self.peers[key] = {
+                        "name": (self.get_alias(("dm", ip, port))
+                                or self.get_known_name(("dm", ip, port)) or ip),
+                        "ip": ip, "port": port, "last": 0, "static": True}
+        pkt = self._presence_packet()
+        self._send_dict(pkt, "255.255.255.255", self.port)
+        with self.plock:
+            statics = [k for k, v in self.peers.items() if v.get("static")]
+        for (ip, port) in statics:
+            self._send_dict(pkt, ip, port)
+        self._probe_stale_peers()
+        self._prune()
 
     def _probe_stale_peers(self):
         """v1.95 — 응답 확인(ping). 친구로 등록됐거나 대화 기록이 있어 목록에 올라온 상대(last=0/오래됨)는
@@ -1214,10 +1220,14 @@ class Engine:
         try:
             pkt = {"type": "ping", "id": uuid.uuid4().hex, "tid": self.instance_id,
                    "name": self.name, "port": self.port}
+            with self.plock:
+                _last = (self.peers.get(key) or {}).get("last", 0)
+            was_offline = time.time() - _last >= PEER_TIMEOUT      # 이미 접속 중으로 보이던 상대는 목록을 다시 그릴 이유가 없다
             if self._send_reliable_wait(pkt, ip, port):
                 self._probe_fail.pop(key, None)
                 self._probe_next[key] = time.time() + 9
-                self._emit({"ev": "peer"})       # 목록·상태 표시 갱신
+                if was_offline:
+                    self._emit({"ev": "peer"})       # 대기 → 접속 중으로 바뀐 때만 목록·상태 표시 갱신(v1.117: 9초마다 사이드바 전체를 다시 만들던 것)
             else:
                 self._probe_fail[key] = self._probe_fail.get(key, 0) + 1
         except Exception as _e:
@@ -1276,8 +1286,9 @@ class Engine:
         with self.plock:            # v1.103 — 사라진 상대의 ping 기록을 정리한다(계속 자라던 dict)
             _alive_keys = set(self.peers.keys())
         if len(self._probe_next) > len(_alive_keys) + 32:
-            self._probe_next = {k: v for k, v in self._probe_next.items() if k in _alive_keys}
-            self._probe_fail = {k: v for k, v in self._probe_fail.items() if k in _alive_keys}
+            # probe 스레드가 동시에 이 표를 고치므로 dict()로 한 번에 복사한 사본을 걸러야 순회 중 크기 변경 오류가 없다
+            self._probe_next = {k: v for k, v in dict(self._probe_next).items() if k in _alive_keys}
+            self._probe_fail = {k: v for k, v in dict(self._probe_fail).items() if k in _alive_keys}
 
         # 미완료 파일 전송 세션(120초 경과) 메모리 정리
         with self.tlock:

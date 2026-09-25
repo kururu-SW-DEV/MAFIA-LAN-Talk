@@ -558,10 +558,13 @@ class MafiaSecretMixin:
 
     def _poll_ghost_ui_queue(self):
         """v1.17 — 유령방 UI 큐 드레인(메인스레드 전용). 0.3초 주기."""
+        import queue as _q
         try:
             while True:
                 kind, name, t = self._ghost_ui_q.get_nowait()
                 self._append_ghost(f"👻 {name}: {t}", ai=True)
+        except _q.Empty:
+            pass                     # v1.117 — 비었다는 정상 신호를 '삼킨 예외'로 300ms마다 기록하지 않는다
         except Exception as _swallow_e:
             applog.swallowed(_swallow_e)
         if getattr(self, "_ghost_ui_open", False):
@@ -572,13 +575,6 @@ class MafiaSecretMixin:
             self.root.after(300, self._poll_ghost_ui_queue)
         else:
             self._ghost_poll_on = False
-
-    def _ghost_whisper_ok(self, txt):
-        """유령방 문구 검증 — 실제 게임 채팅에 겹치는 모양새 방지(느낌표/쓸데없이)."""
-        if not txt:
-            return False
-        # 최대 160자 — 유령방 수단이기 때문에 짧게
-        return len(txt) <= 160
 
     def _ghost_fallback_lines(self):
         import random as _rr
@@ -813,6 +809,12 @@ class MafiaSecretMixin:
             return
         box.configure(state="normal")
         box.insert("end", text + chr(10))
+        try:                # v1.117 — 열어 둔 채 오래 쌓이지 않게 메모리 기록(_GHOST_LOG_MAX)과 같은 상한으로 위쪽을 지운다
+            _n = int(box.index("end-1c").split(".")[0])
+            if _n > self._GHOST_LOG_MAX + 50:
+                box.delete("1.0", f"{_n - self._GHOST_LOG_MAX}.0")
+        except Exception as _swallow_e:
+            applog.swallowed(_swallow_e)
         box.configure(state="disabled")
         box.see("end")
 

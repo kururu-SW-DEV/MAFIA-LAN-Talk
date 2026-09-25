@@ -267,7 +267,7 @@ class MafiaNightMixin:
         self.add_mafia_host(
             "🌙 밤이 찾아왔습니다. 마피아는 '살해 이름'을, 의사는 '구조 이름'을 "
             "게임방에 적어 주세요. (밤 행동은 30초 안에)")
-        self.mafia_start_btn.configure(text="[게임 진행 중]", state="disabled")
+        self._start_btn_running()
         self.root.after(1800, self._show_night_panel)
         self.root.after(2200, self._maybe_open_mafia_room)   # 사람 마피아 동료가 있으면 비밀방 자동 생성
         self._mafia_secret_log = []                          # 이번 밤의 마피아 비밀 대화 기록
@@ -407,13 +407,7 @@ class MafiaNightMixin:
         self._wrap_overlay_close_with(self._cancel_night_pick_tick)
 
     def _cancel_night_pick_tick(self):
-        t = getattr(self, "_night_pick_tick", None)
-        if t:
-            try:
-                self.root.after_cancel(t)
-            except Exception as _swallow_e:
-                applog.swallowed(_swallow_e)
-            self._night_pick_tick = None
+        self._cancel_after("_night_pick_tick")
 
     def _apply_night_pick(self, name, role):
         me = getattr(self.engine, "name", None)
